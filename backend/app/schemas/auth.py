@@ -1,14 +1,17 @@
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from app.schemas.common import Address, CamelModel, Email, NewPassword
 
+# Stripped before the length check, so a blank name is a 400 instead of failing the database CHECK.
+UserName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+
 
 class SignupRequest(CamelModel):
-    name: str = Field(min_length=1, max_length=200)
+    name: UserName
     email: Email
     password: NewPassword
     company: str | None = Field(default=None, max_length=200)
@@ -38,7 +41,7 @@ class ChangePasswordRequest(CamelModel):
 class ProfileUpdate(CamelModel):
     """Partial update. phone/company/address live on the customer record, so they only apply to customers."""
 
-    name: str | None = Field(default=None, min_length=1, max_length=200)
+    name: UserName | None = None
     phone: str | None = Field(default=None, max_length=50)
     company: str | None = Field(default=None, max_length=200)
     address: Address | None = None
