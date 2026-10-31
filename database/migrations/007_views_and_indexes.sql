@@ -33,17 +33,19 @@ select s.id, s.number, s.status, s.is_paused,
        (coalesce(t.subtotal, 0) + coalesce(t.tax_total, 0))::numeric(12,2) as total,
        s.notes, s.created_by, s.created_at, s.updated_at, s.closed_at, s.close_reason
   from subscriptions s
-  join customers c on c.id = s.customer_id
-  join plans p     on p.id = s.plan_id
+  join customers c  on c.id = s.customer_id
+  left join plans p on p.id = s.plan_id
   left join lateral (
         select sum(l.amount) as subtotal, sum(l.tax_amount) as tax_total
           from subscription_lines l where l.subscription_id = s.id
        ) t on true;
 comment on view v_subscriptions is
-  'subscriptions + customer/plan names + subtotal/tax_total/total summed from subscription_lines.';
+  'subscriptions + customer/plan names + subtotal/tax_total/total summed from subscription_lines. Plan columns are null for drafts without a plan.';
 
 -- Invoice summary: amount_due and is_overdue live ONLY here (API.md section 2).
-create or replace view v_invoices with (security_invoker = true) as
+-- Dropped first because 010 re-creates it with more columns, which CREATE OR REPLACE cannot undo.
+drop view if exists v_invoices;
+create view v_invoices with (security_invoker = true) as
 select i.id, i.number, i.status,
        i.subscription_id, s.number as subscription_number,
        i.customer_id, c.name as customer_name, c.email as customer_email,
