@@ -4,8 +4,8 @@ import pytest
 from sqlalchemy import text
 
 from app.db import engine
-from tests.conftest import TEST_PREFIX, auth_header
-from tests.helpers import API, MISSING_ID, admin_headers, make_staff
+from tests.conftest import auth_header
+from tests.helpers import API, CATALOGUE_PREFIX as TEST_PREFIX, MISSING_ID, admin_headers, make_staff
 
 
 def _cleanup() -> None:
