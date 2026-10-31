@@ -37,6 +37,7 @@ from app.services.subscription_service import v, v_subscriptions
 logger = logging.getLogger("app.billing")
 
 PERIOD_INDEX = "uq_invoices_subscription_period"
+LOCKED = "Locked by another billing run or edit; run billing again to bill it"
 
 
 def _is_billable(sub: Subscription, as_of: date) -> bool:
@@ -156,7 +157,10 @@ def _bill_subscription(
             .with_for_update(skip_locked=True)  # another run is on it: leave it to them
             .execution_options(populate_existing=True)
         ).first()
-        if sub is None or not _is_billable(sub, as_of):
+        if sub is None:  # skipped by SKIP LOCKED: report it, or the run's counts would not add up
+            db.rollback()
+            return [], 0, RunFailure(subscription_id=sub_id, number=number, reason=LOCKED)
+        if not _is_billable(sub, as_of):
             db.rollback()
             return [], 0, None
         plan = db.get(Plan, sub.plan_id)
