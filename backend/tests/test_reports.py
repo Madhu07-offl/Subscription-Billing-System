@@ -45,9 +45,11 @@ def data():
                 "insert into plans (name, price, billing_period, available_from) values (:n, 1, :b, '2020-01-01') returning id",
                 n=f"{CATALOGUE_PREFIX}rep-{key}", b=period,
             )  # fmt: skip
+            # payment_terms has no default since migration 010 and is required past draft.
             sub = one(
-                "insert into subscriptions (customer_id, plan_id, status, start_date, expiry_date, next_billing_date) "
-                "values (:c, :p, 'active', '2020-01-01', '2099-01-01', '2099-01-01') returning id",
+                "insert into subscriptions (customer_id, plan_id, status, start_date, expiry_date, next_billing_date, "
+                "payment_terms) values (:c, :p, 'active', '2020-01-01', '2099-01-01', '2099-01-01', 'immediate') "
+                "returning id",
                 c=ids["customer"], p=plan,
             )  # fmt: skip
             conn.execute(
