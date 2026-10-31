@@ -13,7 +13,8 @@ Brightloop tracks subscriptions in a spreadsheet, remembers renewals by whoever 
 | Folder | Contents |
 | --- | --- |
 | `contract/` | The API contract between frontend and backend: `openapi.yaml` (OpenAPI 3.0.3) and `API.md` with extra detail per endpoint. Frozen at v1; changes go through a reviewed PR. |
-| `database/` | Database schema and related files. |
+| `database/` | PostgreSQL schema for Supabase: numbered migrations `001`–`010` (22 tables, views, triggers, indexes, RLS), `seed.sql` with dev data, `ERD.md` diagram, and `tests/` with a rollback-only smoke test and a concurrency check. |
+| `backend/` | FastAPI REST API (`/api/v1`) on SQLAlchemy 2.0 + psycopg 3: JWT auth with admin/staff/customer roles, catalogue, subscriptions state machine, pricing engine (variants, taxes, discounts), idempotent billing run, invoices, payments and reports. `pytest` suite runs against the real database. |
 | `frontend/` | User interface for the admin, staff and customer portal. |
 
 The contract is the source of truth. Frontend and backend are both built against `contract/openapi.yaml`, and a Prism mock server can serve the same paths so the frontend can be developed before the backend is ready.
