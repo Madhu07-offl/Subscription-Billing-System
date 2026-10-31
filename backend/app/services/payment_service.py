@@ -9,7 +9,7 @@ import uuid
 from datetime import date
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import Numeric, Uuid, column, func, select, table
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -17,6 +17,9 @@ from app.core.pagination import PageParams, paginate
 from app.models.billing import Invoice, Payment
 from app.models.identity import Customer, User
 from app.schemas.invoices import PaymentInput, PaymentOut
+
+# amount_due is defined once, in v_invoices (invoice_service imports this module, so it cannot be imported back).
+_v_invoices = table("v_invoices", column("id", Uuid), column("amount_due", Numeric(12, 2)))
 
 _COLUMNS = (
     Payment,
@@ -116,7 +119,7 @@ def record_payment(db: Session, body: PaymentInput, user: User) -> PaymentOut:
     amount = body.amount
     if amount.as_tuple().exponent < -2:
         raise AppError.validation("amount can have at most 2 decimals", "amount")
-    amount_due = inv.total - inv.amount_paid
+    amount_due = db.scalar(select(_v_invoices.c.amount_due).where(_v_invoices.c.id == inv.id))
     if amount <= 0:
         raise AppError.business_rule("amount must be greater than 0", [{"field": "amount", "message": "Must be > 0"}])
     if amount > amount_due:
