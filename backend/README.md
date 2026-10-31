@@ -80,6 +80,28 @@ curl -s localhost:4000/api/v1/auth/me -H 'authorization: Bearer <token>'
 
 Until email sending exists, `POST /auth/forgot-password` prints the reset link to the server console.
 
+## Demo data
+
+`scripts/demo_data.py` fills an empty database with realistic data for demos and manual testing. It uses the service
+layer (signup, subscriptions and their lifecycle, the billing run, invoices, payments); the catalogue and customer rows
+use the ORM models because those services do not exist yet.
+
+```bash
+python scripts/demo_data.py            # create (does nothing if Demo data is already there)
+python scripts/demo_data.py --reset    # delete everything it created
+```
+
+It needs the seeded admin (`database/seed.sql`). What you get, all prefixed `Demo` (customers are `demo-customerN@example.com`):
+
+- 8 customers; `demo-customer1@example.com` / `Demo#Pass2026` can log in to see the customer views
+- 3 products with variants, a Demo GST 18% tax, 3 plans (2 monthly, 1 yearly), 2 discounts
+- 15 subscriptions across every status: draft (2, one bare), quotation (2), confirmed (2), active (7, one of them paused), closed (2)
+- one billing run covering the active subscriptions (several months back, so catch-up invoices appear), then the invoices are
+  confirmed and dated in their own period; about three in five are paid in full, one in five partly, one in five unpaid,
+  so older unpaid ones are overdue; the newest invoice of every third subscription stays a draft
+
+Dates are relative to the day you run it. Run it only against a development database: it writes real rows.
+
 ## Daily jobs
 
 Two jobs keep subscriptions moving. Run them **once a day, in this order**, from cron or any scheduler:
