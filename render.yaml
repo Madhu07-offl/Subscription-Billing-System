@@ -1,0 +1,21 @@
+# Render blueprint: New -> Blueprint, pick this repo. Values marked sync: false are asked for on first deploy.
+services:
+  - type: web
+    name: subscription-billing-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL        # Supabase pooler (transaction) connection string
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FRONTEND_ORIGINS    # deployed frontend origin(s), comma separated, no trailing slash
+        sync: false
+      - key: FRONTEND_URL        # frontend base URL, used in the password-reset link
+        sync: false
