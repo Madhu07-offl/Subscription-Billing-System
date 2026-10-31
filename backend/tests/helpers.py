@@ -4,6 +4,9 @@ from tests.conftest import auth_header, unique_email
 API = "/api/v1"
 ADMIN = {"email": "admin@brightloop.test", "password": "ChangeMe#2026"}  # from database/seed.sql
 STAFF_PASSWORD = "Sup3r#Secret"
+# Catalogue test rows (products, plans, taxes, discounts) use this prefix and cleanup only touches it,
+# so a run never deletes rows other people created with the shared "pytest-" prefix.
+CATALOGUE_PREFIX = "pytest-pk-"
 MISSING_ID = "00000000-0000-4000-8000-00000000dead"
 
 
