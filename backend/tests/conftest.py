@@ -16,15 +16,26 @@ def unique_email(label: str = "user") -> str:
     return f"{TEST_PREFIX}{label}-{uuid.uuid4().hex[:10]}@example.com"
 
 
+# Billing runs created through the API; the tests register their ids so cleanup can remove them too.
+TRACKED_RUNS: set[str] = set()
+
+
 def _cleanup() -> None:
     with engine.begin() as conn:
         pattern = {"p": f"{TEST_PREFIX}%"}
-        # Subscriptions (lines and history cascade) and catalogue rows made by tests; children before parents.
+        mine = "select id from customers where email like :p"
+        # Money first: payments and invoices (lines and discount usages cascade) of test customers, then the
+        # billing runs the tests started. Subscriptions are RESTRICTed by invoices, so they come after.
         conn.execute(
-            text("delete from subscriptions where customer_id in (select id from customers where email like :p)"),
+            text(f"delete from payments where invoice_id in (select id from invoices where customer_id in ({mine}))"),
             pattern,
         )
-        for table in ("quotation_templates", "plans", "products", "taxes"):
+        conn.execute(text(f"delete from invoices where customer_id in ({mine})"), pattern)
+        if TRACKED_RUNS:
+            conn.execute(text("delete from billing_runs where id = any(cast(:ids as uuid[]))"), {"ids": list(TRACKED_RUNS)})
+        # Subscriptions (lines and history cascade) and catalogue rows made by tests; children before parents.
+        conn.execute(text(f"delete from subscriptions where customer_id in ({mine})"), pattern)
+        for table in ("discounts", "quotation_templates", "plans", "products", "taxes"):
             conn.execute(text(f"delete from {table} where name like :p"), pattern)
         # password_reset_tokens go with their users (ON DELETE CASCADE); users reference customers.
         conn.execute(text("delete from users where email like :p"), pattern)
@@ -58,3 +69,10 @@ def new_user(client):
 
 def auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(scope="session")
+def admin_headers(client):
+    r = client.post("/api/v1/auth/login", json={"email": "admin@brightloop.test", "password": "ChangeMe#2026"})
+    assert r.status_code == 200, r.text
+    return auth_header(r.json()["token"])
