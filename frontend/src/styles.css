@@ -52,6 +52,8 @@ button,input,select,textarea{font:inherit;color:inherit}
   height:calc(100vh - 24px);overflow-y:auto;box-shadow:var(--sh)
 }
 .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 20px;font-weight:700;font-size:16px;letter-spacing:-.03em}
+.brand-logo{display:block;width:178px;height:auto;max-height:38px;object-fit:contain;object-position:left center}
+.brand-logo-icon{width:42px;height:42px}
 .brand-mark{
   width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
   background:var(--mint);color:var(--mint-ink);font-size:15px;font-weight:800

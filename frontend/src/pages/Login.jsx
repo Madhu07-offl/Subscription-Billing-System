@@ -102,7 +102,7 @@ export default function Login({ onLogin, expired }) {
   return (
     <div className="auth">
       <div className="auth-art">
-        <div className="brand" style={{ padding: 0, color: '#fff' }}><span className="brand-mark">B</span> Brightloop</div>
+        <div className="brand" style={{ padding: 0, color: '#fff' }}><img className="brand-logo brand-logo-full" src="/logo-full.png" alt="Brightloop" /></div>
         <h2>Run plans, subscriptions<br />and recurring billing<br />in one place.</h2>
         <p>The digital backbone for a business that earns its money every month — not just once.</p>
         <div className="auth-feats">
@@ -112,7 +112,7 @@ export default function Login({ onLogin, expired }) {
       </div>
       <div className="auth-form">
         <div style={{ width: '100%', maxWidth: 360 }}>
-          <div className="brand auth-mobile-brand"><span className="brand-mark">B</span> Brightloop</div>
+          <div className="brand auth-mobile-brand"><img className="brand-logo brand-logo-icon" src="/logo-icon.png" alt="Brightloop" /></div>
           {expired && view === 'signin' && <div className="form-msg" role="status" style={{ marginBottom: 18 }}><Icon name="alert" />Your session expired. Please sign in again.</div>}
           {view === 'signin' && <SignIn onLogin={onLogin} go={setView} />}
           {view === 'signup' && <SignUp onLogin={onLogin} go={setView} />}

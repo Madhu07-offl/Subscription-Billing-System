@@ -91,7 +91,7 @@ function Shell({ user, onLogout, children }) {
     <div className="app">
       {open && <div className="scrim" onClick={() => setOpen(false)} />}
       <aside className={`sidebar ${open ? 'open' : ''}`} aria-label="Main navigation">
-        <div className="brand"><span className="brand-mark">B</span> Brightloop</div>
+        <div className="brand"><img className="brand-logo" src="/logo-full.png" alt="Brightloop" /></div>
         <nav>
           {NAV.map(g => {
             const items = g.items.filter(i => i.roles.includes(user.role));

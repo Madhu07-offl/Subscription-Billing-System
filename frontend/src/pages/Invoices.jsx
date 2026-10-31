@@ -140,7 +140,7 @@ export function InvoiceDetail({ user }) {
       </div>
 
       <div className="print-only print-head">
-        <div className="brand"><span className="brand-mark">B</span> Brightloop</div>
+        <div className="brand"><img className="brand-logo" src="/logo-full.png" alt="Brightloop" /></div>
         <div><h2>Invoice {i.number}</h2><div>Status: {label(i.isOverdue ? 'overdue' : i.status)}</div></div>
       </div>
 
