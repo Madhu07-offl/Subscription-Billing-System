@@ -7,7 +7,7 @@ begin;
 
 do $$
 declare
-  v_sub uuid; v_inv uuid; v_inv2 uuid; v_pay uuid; v_n int; v_row record;
+  v_sub uuid; v_draft uuid; v_inv uuid; v_inv2 uuid; v_pay uuid; v_n int; v_row record;
   cust constant uuid := '00000000-0000-4000-8000-000000000101';
   plan constant uuid := '00000000-0000-4000-8000-000000000301';
   prod constant uuid := '00000000-0000-4000-8000-000000000201';
@@ -15,6 +15,16 @@ declare
   disc constant uuid := '00000000-0000-4000-8000-000000000501';
   tax  constant uuid := '00000000-0000-4000-8000-000000000401';
 begin
+  -- a draft needs only a customer; later statuses need plan and dates
+  insert into subscriptions (customer_id) values (cust) returning id into v_draft;
+  select * into v_row from v_subscriptions where id = v_draft;
+  assert v_row.status = 'draft' and v_row.plan_id is null and v_row.plan_name is null, 'customer-only draft shows in v_subscriptions';
+  begin update subscriptions set status = 'quotation' where id = v_draft; raise exception 'FAIL: quotation without plan_id';
+  exception when check_violation then null; end;
+  begin insert into subscriptions (customer_id, status, start_date, expiry_date) values (cust, 'quotation', '2026-10-01', '2027-09-30');
+        raise exception 'FAIL: quotation insert without plan_id';
+  exception when check_violation then null; end;
+
   -- numbering
   insert into subscriptions (customer_id, plan_id, start_date, expiry_date)
   values (cust, plan, '2026-10-01', '2027-09-30') returning id into v_sub;
@@ -50,6 +60,14 @@ begin
   insert into invoices (subscription_id, customer_id, period_start, period_end, subtotal, discount_total, tax_total, total)
   values (v_sub, cust, '2026-10-01', '2026-10-31', 3120.00, 312.00, 505.44, 3313.44) returning id into v_inv;
   assert (select number from invoices where id = v_inv) ~ '^INV-\d{4}-\d{4}$', 'invoice number format';
+  -- billing snapshot is filled from the customer and survives customer edits
+  select * into v_row from invoices where id = v_inv;
+  assert v_row.billing_name = 'Asha Rao' and v_row.billing_email = 'asha.rao@example.com'
+     and v_row.billing_company = 'Rao Textiles Pvt Ltd' and v_row.billing_address->>'city' = 'Bengaluru', 'invoice snapshot filled';
+  update customers set name = 'Renamed', city = 'Pune' where id = cust;
+  assert (select billing_name from invoices where id = v_inv) = 'Asha Rao'
+     and (select billing_address->>'city' from invoices where id = v_inv) = 'Bengaluru', 'customer edit leaves invoice snapshot alone';
+  update customers set name = 'Asha Rao', city = 'Bengaluru' where id = cust;
   begin
     insert into invoices (subscription_id, customer_id, period_start, period_end)
     values (v_sub, cust, '2026-10-01', '2026-10-31'); raise exception 'FAIL: double billing allowed';
@@ -123,6 +141,7 @@ begin
   -- reports
   -- cancelled invoice + voided payments must not appear in revenue facts
   select count(*) into v_n from v_report_revenue_facts where invoice_id = v_inv; assert v_n = 0, 'revenue facts exclude cancelled/voided';
+  assert (select is_active from product_variants where id = vari), 'variant active by default';
   perform * from v_report_status_counts; perform * from v_report_mrr; perform * from v_customers;
 
   raise notice 'smoke test OK';

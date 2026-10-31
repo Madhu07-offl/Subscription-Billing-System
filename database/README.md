@@ -14,7 +14,7 @@ Files are numbered and must run in order. Each is idempotent, so re-running is s
 ### Supabase
 
 1. Dashboard -> **SQL Editor**.
-2. Paste and run `migrations/001...` to `008...` in order, then optionally `seed.sql`.
+2. Paste and run `migrations/001...` to `009...` in order, then optionally `seed.sql`.
 
 Or from your machine (get the connection string from *Project Settings -> Database*):
 
@@ -51,7 +51,8 @@ Change it or delete the user before real use. Never commit real credentials; kee
 | `migrations/006_billing.sql` | `billing_runs`, `invoices`, `invoice_lines`, `payments` (+ payment sync trigger) |
 | `migrations/007_views_and_indexes.sql` | views `v_customers`, `v_subscriptions`, `v_invoices`, `v_discounts`, `v_report_*`; all secondary indexes |
 | `migrations/008_rls.sql` | RLS on every table, no policies, anon/authenticated privileges revoked |
-| `seed.sql` | admin, customer, "Brightloop CRM" + Brand=Odoo (+560), monthly plan, GST 18%, one discount |
+| `migrations/009_review_fixes.sql` | team schema review: nullable draft fields, invoice billing snapshot, variant `is_active` |
+| `seed.sql` | admin, customer, "Brightloop CRM" + Brand=Odoo (+560), monthly plan, GST 18%, one discount, one customer-only draft subscription |
 | `tests/smoke.sql` | rollback-only assertions for the rules below |
 | `tests/concurrency.sh` | parallel-session check that `next_document_number()` never repeats (needs `psql`) |
 
@@ -64,6 +65,11 @@ Change it or delete the user before real use. Never commit real credentials; kee
 - **Computed, never stored**: `amount_due` and `is_overdue` (in `v_invoices`), subscription `subtotal/tax_total/total` (in `v_subscriptions`), discount `status` (in `v_discounts`), `hasLogin`/`activeSubscriptions` (in `v_customers`). `is_overdue = status = 'confirmed' AND due_date < current_date AND amount_due > 0`. Stored `invoices.amount_paid` is the only payment total.
 - **Double billing blocked in the DB**: partial unique index `uq_invoices_subscription_period` on `invoices (subscription_id, period_start) WHERE status <> 'cancelled'`. Cancelling an invoice frees its period.
 - **Immutable invoices**: `invoice_lines` copy description, unit price, discount (id/name/amount) and tax (id/name/rate/amount). Catalogue edits never alter issued invoices. Header totals are checked: `total = subtotal - discount_total + tax_total`.
+- **Drafts only need a customer** (contract `SubscriptionInput`). `plan_id`, `start_date`, `expiry_date` are nullable; `subscriptions_complete_ck` requires all three once `status` is not `draft`. `v_subscriptions` LEFT JOINs `plans`, so plan columns are null for such drafts. The backend must validate them when moving a draft to `quotation`.
+- **Invoice billing snapshot**: `invoices.billing_name/billing_email/billing_company/billing_address` (jsonb, includes `taxId`) are filled from the customer by `trg_invoices_billing_snapshot` on insert when not supplied, so editing a customer never changes old invoices. Read them from `invoices` (`v_invoices` still shows the live customer name/email, because 007 cannot be re-run if the view gains columns).
+- **Variants are archived, not deleted** once referenced: set `product_variants.is_active = false`. Lines and templates keep pointing at the row.
+- **Empty join tables mean "all"**: no `discount_subscriptions` rows = the discount applies to all subscriptions (when `scope = 'subscriptions'`), and no `tax_product_types` rows = the tax applies to all product types, as the contract defines.
+- **Signup linking (backend rule)**: on signup, if a `customers` row with that email already exists, set `users.customer_id` to it instead of creating a new customer. Otherwise create the customer, then the user.
 - **Pause is a flag** (`subscriptions.is_paused`), so there are exactly the contract's five statuses. `subscription_status_history` records status changes plus pause/resume/renew events. `closed_at` is set iff `status = 'closed'`.
 - **Delete behaviour**: child lines `CASCADE`; financial records (`invoices`, `payments`, `invoice_lines`, customers/plans/products referenced by subscriptions) `RESTRICT`; optional references (`template_id`, subscription-line `tax_id`/`variant_id`) `SET NULL`. Invoices and payments are cancelled/voided, never deleted.
 - **Variant belongs to product**: composite FK `(variant_id, product_id)` on template and subscription lines.
@@ -80,6 +86,7 @@ Kept deliberately small, because they protect money:
 | `trg_<table>_updated_at` | stamps `updated_at` |
 | `trg_discount_usages_sync` | inserting a `discount_usages` row does `used_count + 1`; setting `released_at` (invoice cancelled) does `- 1`. `CHECK (used_count <= usage_limit)` rejects over-use, even under concurrent runs |
 | `trg_invoices_release_discounts` | cancelling an invoice sets `released_at` on its `discount_usages`, which hands the usage back via the trigger above |
+| `trg_invoices_billing_snapshot` | before insert on `invoices`: copies the customer's name, email, company and address into the `billing_*` columns when they are null |
 | `trg_payments_sync_invoice` | after any payment change: recomputes `invoices.amount_paid` from non-voided payments and flips `confirmed <-> paid`. Rejects a payment on a non-`confirmed` invoice. Void a payment by setting `voided_at` (`is_voided` is a generated column). `CHECK (amount_paid <= total)` rejects overpayment |
 
 **The backend must therefore not update `discounts.used_count`, `invoices.amount_paid`, or the `paid` status by hand.** Insert the usage / payment row instead. To remove a trigger, drop it and move the logic to the API.
@@ -97,4 +104,4 @@ These need the backend (they span rows or depend on rules in `API.md`): state-ma
 - **New enum value**: `ALTER TABLE ... DROP CONSTRAINT ...; ADD CONSTRAINT ... CHECK (... in (...))` in a new migration (inline column checks are auto-named `<table>_<column>_check`, e.g. `subscriptions_status_check`).
 - **New column on a table that has a view**: add the column in a new migration, then `DROP VIEW` + recreate the view (views list columns explicitly on purpose).
 - **New updated_at table**: add the column, then `select attach_updated_at('my_table');`.
-- **New migration**: add `009_*.sql`, idempotent (`if not exists`), and re-run `008_rls.sql`.
+- **New migration**: add `010_*.sql`, idempotent (`if not exists`), and re-run `008_rls.sql`.
