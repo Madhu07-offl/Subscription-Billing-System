@@ -12,14 +12,14 @@ npm run dev        # http://localhost:5173
 
 ## Connecting the real backend
 
-All data goes through one file: `src/api/index.js`. Nothing else knows where data comes from.
+By default the app talks to the backend at `http://localhost:8000/api/v1` (override with `VITE_API_URL`).
+Set `VITE_USE_MOCK=true` to run entirely on mock data instead.
 
-```js
-export const USE_MOCK = false;                          // was true
-export const BASE_URL = 'http://localhost:4000/api/v1';
-```
+Live over HTTP today: login, `/auth/me`, products, plans, customers, users.
+Everything else (subscriptions, invoices, billing, payments, taxes, discounts, reports) still uses the mock
+until the backend implements it. All of it lives in `src/api/index.js`.
 
-Until then the app runs on in-memory mock data shaped exactly like the contract:
+Mock data is in-memory mock data shaped exactly like the contract:
 money as a two-decimal string, lists as `{ data, meta: { page, limit, total, totalPages } }`,
 errors as `{ error: { code, message, details[] } }`.
 
