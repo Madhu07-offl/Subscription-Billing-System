@@ -7,6 +7,8 @@ export const USE_MOCK  = true;
 // Set VITE_API_URL at build time (see .env.example); the FastAPI backend runs on port 8000 locally.
 export const BASE_URL  = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+import { ApiError } from './errors';
+
 const money = n => n.toFixed(2);
 const today = new Date();
 const iso   = d => d.toISOString().slice(0, 10);
@@ -133,9 +135,7 @@ const page = (rows, { page:pg=1, limit=20 } = {}) => ({
   meta: { page:pg, limit, total:rows.length, totalPages:Math.max(1,Math.ceil(rows.length/limit)) },
 });
 const sum = (rows, f) => rows.reduce((a,r) => a + (+f(r)), 0);
-export class ApiError extends Error {
-  constructor(code, message, details=[]) { super(message); this.code=code; this.details=details; }
-}
+export { ApiError };
 
 /* ------------------------- subscription lifecycle ------------------------ */
 export const SUB_FLOW = ['draft','quotation','confirmed','active','closed'];
