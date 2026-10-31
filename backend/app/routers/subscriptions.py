@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from app.core.deps import CurrentUser, DbSession, require_roles
 from app.core.pagination import Pagination, page_of
 from app.models.identity import User
+from app.schemas.invoices import InvoiceList
 from app.schemas.subscriptions import (
     CloseRequest,
     RenewRequest,
@@ -18,6 +19,7 @@ from app.schemas.subscriptions import (
     SubscriptionStatus,
     SubscriptionUpdate,
 )
+from app.services import invoice_service
 from app.services import subscription_service as svc
 
 router = APIRouter(prefix="/subscriptions", tags=["Subscriptions"])
@@ -110,3 +112,9 @@ def resume(id: uuid.UUID, db: DbSession, user: CurrentUser):
 @router.post("/{id}/renew", response_model=SubscriptionOut)
 def renew(id: uuid.UUID, db: DbSession, user: CurrentUser, body: RenewRequest | None = None):
     return svc.renew(db, id, body, user)
+
+
+@router.get("/{id}/invoices", response_model=InvoiceList)
+def subscription_invoices(id: uuid.UUID, db: DbSession, user: CurrentUser, params: Pagination):
+    items, meta = invoice_service.list_for_subscription(db, id, user, params)
+    return page_of(items, meta)
