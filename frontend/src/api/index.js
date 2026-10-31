@@ -1,13 +1,15 @@
 // ===================================================================
 //  API layer — Brightloop Subscription Billing
 //  Matches contract/openapi.yaml  (base /api/v1, Bearer JWT)
-//  Flip USE_MOCK to false when the backend is live. Nothing else changes.
+//  Real backend by default. Set VITE_USE_MOCK=true for the offline demo
+//  (in-memory data below, no server needed).
 // ===================================================================
-export const USE_MOCK  = true;
+import { ApiError } from './errors';
+import { createRealApi } from './real';
+
+export const USE_MOCK  = import.meta.env.VITE_USE_MOCK === 'true';
 // Set VITE_API_URL at build time (see .env.example); the FastAPI backend runs on port 8000 locally.
 export const BASE_URL  = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
-
-import { ApiError } from './errors';
 
 const money = n => n.toFixed(2);
 const today = new Date();
@@ -145,13 +147,14 @@ const logHistory = (sub, from, to) => db.history.unshift({
 });
 
 /* --------------------------------- API --------------------------------- */
-export const api = {
+const mockApi = {
   /* auth */
   async login(email, password, role) {
     await wait();
     const user = db.users.find(u => u.role === role) || db.users[0];
     return { token:'mock.jwt.token', user:{ ...user, email: email || user.email } };
   },
+  logout() { localStorage.removeItem('bl_user'); },
   async me() { await wait(80); return JSON.parse(localStorage.getItem('bl_user') || 'null'); },
 
   /* catalogue */
@@ -346,3 +349,13 @@ export const api = {
     })).filter(r => r.value > 0) };
   },
 };
+
+/* ---------------------------- mock or real ---------------------------- */
+let real = null;
+if (!USE_MOCK) {
+  // The mock seed above must not leak into real mode: the pages read db.* directly.
+  Object.keys(db).forEach(k => { db[k].length = 0; });
+  real = createRealApi(db, BASE_URL);
+  if (localStorage.getItem('bl_user')) real.hydrate().catch(() => {});   // page reload while signed in
+}
+export const api = USE_MOCK ? mockApi : real.api;
