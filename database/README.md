@@ -33,6 +33,7 @@ for f in database/migrations/*.sql database/seed.sql; do
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f" || break
 done
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/tests/smoke.sql   # optional behaviour check
+bash database/tests/concurrency.sh                                      # optional, uses $DATABASE_URL
 ```
 
 The seed creates `admin@brightloop.test` with the **development-only** password `ChangeMe#2026`.
@@ -52,6 +53,7 @@ Change it or delete the user before real use. Never commit real credentials; kee
 | `migrations/008_rls.sql` | RLS on every table, no policies, anon/authenticated privileges revoked |
 | `seed.sql` | admin, customer, "Brightloop CRM" + Brand=Odoo (+560), monthly plan, GST 18%, one discount |
 | `tests/smoke.sql` | rollback-only assertions for the rules below |
+| `tests/concurrency.sh` | parallel-session check that `next_document_number()` never repeats (needs `psql`) |
 
 ## Design decisions
 
@@ -77,7 +79,8 @@ Kept deliberately small, because they protect money:
 |---|---|
 | `trg_<table>_updated_at` | stamps `updated_at` |
 | `trg_discount_usages_sync` | inserting a `discount_usages` row does `used_count + 1`; setting `released_at` (invoice cancelled) does `- 1`. `CHECK (used_count <= usage_limit)` rejects over-use, even under concurrent runs |
-| `trg_payments_sync_invoice` | after any payment change: recomputes `invoices.amount_paid` from non-voided payments and flips `confirmed <-> paid`. Rejects a payment on a non-`confirmed` invoice. `CHECK (amount_paid <= total)` rejects overpayment |
+| `trg_invoices_release_discounts` | cancelling an invoice sets `released_at` on its `discount_usages`, which hands the usage back via the trigger above |
+| `trg_payments_sync_invoice` | after any payment change: recomputes `invoices.amount_paid` from non-voided payments and flips `confirmed <-> paid`. Rejects a payment on a non-`confirmed` invoice. Void a payment by setting `voided_at` (`is_voided` is a generated column). `CHECK (amount_paid <= total)` rejects overpayment |
 
 **The backend must therefore not update `discounts.used_count`, `invoices.amount_paid`, or the `paid` status by hand.** Insert the usage / payment row instead. To remove a trigger, drop it and move the logic to the API.
 
