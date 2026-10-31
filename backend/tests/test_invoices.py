@@ -79,6 +79,8 @@ def test_customer_sees_only_own_invoices_and_others_are_404(client, admin_header
     other = make_customer(client, "other")
     _, mine = billed(client, admin_headers, customer, cat)
     _, theirs = billed(client, admin_headers, other, cat)
+    for inv_id in (mine, theirs):  # customers never see drafts, so issue them first
+        assert post(client, admin_headers, f"/invoices/{inv_id}/confirm").status_code == 200
 
     assert get_invoice(client, customer["headers"], mine)["id"] == mine
     assert client.get(f"{API}/invoices/{theirs}", headers=customer["headers"]).status_code == 404
@@ -91,6 +93,25 @@ def test_customer_sees_only_own_invoices_and_others_are_404(client, admin_header
     assert client.get(f"{API}/subscriptions/{other_sub}/invoices", headers=customer["headers"]).status_code == 404
     # customers cannot change invoices
     assert post(client, customer["headers"], f"/invoices/{mine}/confirm").status_code == 403
+
+
+def test_customers_never_see_draft_invoices_but_staff_do(client, admin_headers, cat, customer):
+    sub, draft = billed(client, admin_headers, customer, cat)
+    own = customer["headers"]
+
+    assert client.get(f"{API}/invoices/{draft}", headers=own).status_code == 404
+    assert client.get(f"{API}/invoices", headers=own).json()["data"] == []
+    assert client.get(f"{API}/invoices?status=draft", headers=own).json()["meta"]["total"] == 0
+    assert client.get(f"{API}/subscriptions/{sub['id']}/invoices", headers=own).json()["data"] == []
+    # staff and admin still see it
+    assert get_invoice(client, admin_headers, draft)["status"] == "draft"
+    assert [i["id"] for i in invoices_of(client, admin_headers, sub["id"])] == [draft]
+
+    # once confirmed it appears for the customer everywhere
+    post(client, admin_headers, f"/invoices/{draft}/confirm")
+    assert get_invoice(client, own, draft)["status"] == "confirmed"
+    assert [i["id"] for i in client.get(f"{API}/invoices", headers=own).json()["data"]] == [draft]
+    assert [i["id"] for i in client.get(f"{API}/subscriptions/{sub['id']}/invoices", headers=own).json()["data"]] == [draft]
 
 
 def test_list_filters_and_pagination(client, admin_headers, cat, customer):
