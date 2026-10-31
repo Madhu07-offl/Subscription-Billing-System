@@ -8,3 +8,9 @@ node_modules/
 Subscription_Management_System.pdf
 contract/*REVIEW*.md
 internal-notes/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
