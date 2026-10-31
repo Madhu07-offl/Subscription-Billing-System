@@ -186,9 +186,9 @@ def invoices_of(client, headers, subscription_id: str) -> list[dict]:
 
 
 def periods_until(start: date, as_of: date, expiry: date, billing_period: str = "monthly") -> list[date]:
-    """Period starts a correct run bills: from `start` while <= as_of and <= expiry."""
+    """Period starts a correct run bills: from `start` while <= as_of and < expiry (exclusive)."""
     out, d = [], start
-    while d <= as_of and d <= expiry:
+    while d <= as_of and d < expiry:
         out.append(d)
         d = add_period(d, billing_period)
     return out
