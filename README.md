@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="logo-bl.webp" alt="Brightloop Logo" width="320">
+  <img src="logo-bl.png" alt="Brightloop Logo" width="320">
 </p>
 
 <h1 align="center">Subscription Billing System</h1>
