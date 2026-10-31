@@ -18,8 +18,12 @@ export function Login({ onLogin }) {
     e.preventDefault();
     if (!pwOk) return setErr('Password needs 8+ characters with an uppercase, a lowercase and a special character.');
     setBusy(true); setErr(null);
-    const { user } = await api.login(email, pw, role);
-    onLogin(user);
+    try {
+      const { user } = await api.login(email, pw, role);
+      onLogin(user);
+    } catch (e) {
+      setErr(e.message); setBusy(false);
+    }
   };
   const pick = r => {
     setRole(r);

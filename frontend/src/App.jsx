@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
+import { api } from './api';
 import { Toast, initials } from './ui';
 import {
   Login, Dashboard, Subscriptions, SubscriptionDetail,
@@ -95,7 +96,7 @@ export default function App() {
 
   const notify = useCallback((msg, bad=false) => setToast({ msg, bad, k:Date.now() }), []);
   const login  = u => { localStorage.setItem('bl_user', JSON.stringify(u)); setUser(u); };
-  const logout = () => { localStorage.removeItem('bl_user'); setUser(null); };
+  const logout = () => { api.logout(); setUser(null); };
 
   if (!user) return <Login onLogin={login} />;
 
