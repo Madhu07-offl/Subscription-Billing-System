@@ -144,6 +144,13 @@ def test_signup_missing_fields_and_bad_email(client):
     assert {"name", "email", "password"} <= fields
 
 
+def test_signup_blank_name_is_400(client):
+    body = {"name": "   ", "email": unique_email("blank"), "password": "Brightloop#2026"}
+    r = client.post(f"{API}/auth/signup", json=body)
+    assert r.status_code == 400  # not a 500 from the database CHECK
+    assert [d["field"] for d in r.json()["error"]["details"]] == ["name"]
+
+
 # ------------------------------------------------------------- password reset
 def test_forgot_password_always_202_and_logs_link(client, new_user, caplog):
     email, _, _ = new_user("forgot")
@@ -243,6 +250,9 @@ def test_patch_me_updates_customer_profile(client, new_user):
             {"i": signup["user"]["customerId"]},
         ).one()
     assert tuple(row) == ("555", None, "1 Main St", "Pune")
+
+    assert client.patch(f"{API}/auth/me", headers=h, json={"name": "  "}).status_code == 400
+    assert client.get(f"{API}/auth/me", headers=h).json()["name"] == "Renamed"
 
 
 def test_patch_me_for_admin_only_changes_name(client):
