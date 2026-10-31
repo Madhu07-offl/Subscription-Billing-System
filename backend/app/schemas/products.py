@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from app.schemas.common import CamelModel, Money, PageMeta
 
@@ -10,7 +10,8 @@ ProductType = Literal["software", "addon", "service", "goods"]
 
 # numeric(12,2), non-negative, at most two decimals. Accepts "560.00" or 560.
 Price = Annotated[Money, Field(ge=0, max_digits=12, decimal_places=2)]
-Text200 = Annotated[str, Field(min_length=1, max_length=200)]
+# Stripped before the length check, so a blank name/attribute/value is a 400 instead of failing the database CHECK.
+Text200 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 class VariantInput(CamelModel):

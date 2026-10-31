@@ -75,7 +75,7 @@ def test_validation(client, admin, plan, product):
     base = {"name": f"{CATALOGUE_PREFIX}bad", "planId": plan["id"], "validityDays": 30, "lines": []}
     line = {"productId": product["id"], "quantity": 1}
     for bad in (
-        {"name": ""}, {"validityDays": 0}, {"planId": "nope"}, {"lines": [{**line, "quantity": 0}]},
+        {"name": ""}, {"name": "   "}, {"validityDays": 0}, {"planId": "nope"}, {"lines": [{**line, "quantity": 0}]},
         {"lines": [{"quantity": 1}]},
     ):  # fmt: skip
         r = client.post(f"{API}/quotation-templates", json={**base, **bad}, headers=admin)

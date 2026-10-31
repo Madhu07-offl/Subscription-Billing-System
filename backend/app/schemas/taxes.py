@@ -2,7 +2,7 @@ import uuid
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import Field, PlainSerializer
+from pydantic import Field, PlainSerializer, StringConstraints
 
 from app.schemas.common import CamelModel, PageMeta
 from app.schemas.products import ProductType
@@ -13,7 +13,7 @@ Number = Annotated[Decimal, PlainSerializer(float, return_type=float, when_used=
 Amount = Annotated[Number, Field(ge=0, max_digits=12, decimal_places=4)]
 
 Computation = Literal["percentage", "fixed"]
-TaxName = Annotated[str, Field(min_length=1, max_length=200)]
+TaxName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 class TaxInput(CamelModel):

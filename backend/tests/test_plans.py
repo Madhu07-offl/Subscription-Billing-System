@@ -57,7 +57,7 @@ def test_create_returns_contract_shape_with_defaults(client, admin):
 
 def test_validation(client, admin):
     base = {"name": f"{TEST_PREFIX}bad", "price": "1.00", "billingPeriod": "monthly", "availableFrom": str(TODAY)}
-    for bad in ({"billingPeriod": "hourly"}, {"minQuantity": 0}, {"price": "-1"}, {"name": ""}):
+    for bad in ({"billingPeriod": "hourly"}, {"minQuantity": 0}, {"price": "-1"}, {"name": ""}, {"name": "   "}):
         r = client.post(f"{API}/plans", json={**base, **bad}, headers=admin)
         assert r.status_code == 400, (bad, r.text)
     assert client.post(f"{API}/plans", json={"name": "x"}, headers=admin).status_code == 400

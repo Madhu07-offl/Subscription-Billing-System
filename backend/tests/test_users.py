@@ -37,6 +37,16 @@ def test_create_staff_weak_password_is_400_with_field(client, admin):
     assert r.json()["error"]["details"][0]["field"] == "password"
 
 
+def test_blank_name_is_400(client, admin):
+    body = {"name": "   ", "email": unique_email("staff"), "password": STAFF_PASSWORD}
+    r = client.post(f"{API}/users/staff", json=body, headers=admin)
+    assert r.status_code == 400  # not a 409: the email is free, the name is blank
+    assert r.json()["error"]["details"][0]["field"] == "name"
+    email, _ = make_staff(client, admin)
+    [staff] = client.get(f"{API}/users", params={"q": email}, headers=admin).json()["data"]
+    assert client.patch(f"{API}/users/{staff['id']}", json={"name": " "}, headers=admin).status_code == 400
+
+
 def test_only_admin_may_manage_users(client, admin, new_user):
     _, staff = make_staff(client, admin)
     _, _, customer = new_user("cust")

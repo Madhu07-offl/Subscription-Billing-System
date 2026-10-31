@@ -1,13 +1,17 @@
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from app.schemas.common import Address, CamelModel, Email, PageMeta
 
+# Stripped before the length check, so a blank name is a 400 instead of failing the database CHECK.
+CustomerName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+
 
 class CustomerInput(CamelModel):
-    name: str = Field(min_length=1, max_length=200)
+    name: CustomerName
     email: Email
     phone: str | None = Field(default=None, max_length=50)
     company: str | None = Field(default=None, max_length=200)
@@ -18,7 +22,7 @@ class CustomerInput(CamelModel):
 class CustomerUpdate(CamelModel):
     """Partial update: only fields present in the body are applied."""
 
-    name: str | None = Field(default=None, min_length=1, max_length=200)
+    name: CustomerName | None = None
     email: Email | None = None
     phone: str | None = Field(default=None, max_length=50)
     company: str | None = Field(default=None, max_length=200)

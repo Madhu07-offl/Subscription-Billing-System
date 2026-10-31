@@ -2,13 +2,13 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from app.schemas.common import CamelModel, Money, PageMeta
 from app.schemas.products import Price
 
 BillingPeriod = Literal["daily", "weekly", "monthly", "yearly"]
-PlanName = Annotated[str, Field(min_length=1, max_length=200)]
+PlanName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 class PlanInput(CamelModel):

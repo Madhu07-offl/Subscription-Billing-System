@@ -45,6 +45,10 @@ def test_validation(client, admin):
     r = client.post(f"{API}/customers", json={"name": "", "email": "not-an-email"}, headers=admin)
     assert r.status_code == 400
     assert {d["field"] for d in r.json()["error"]["details"]} == {"name", "email"}
+    blank = client.post(f"{API}/customers", json={"name": "   ", "email": unique_email("cust")}, headers=admin)
+    assert blank.status_code == 400  # not a 409: the email is free, the name is blank
+    assert [d["field"] for d in blank.json()["error"]["details"]] == ["name"]
+    assert _create(client, admin, name="  Acme Ltd  ")["name"] == "Acme Ltd"
 
 
 def test_staff_allowed_customer_forbidden(client, admin, new_user):
