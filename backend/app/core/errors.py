@@ -64,8 +64,8 @@ class AppError(Exception):
         return cls(CONFLICT, message)
 
     @classmethod
-    def business_rule(cls, message: str) -> "AppError":
-        return cls(BUSINESS_RULE, message)
+    def business_rule(cls, message: str, details: list[dict[str, str]] | None = None) -> "AppError":
+        return cls(BUSINESS_RULE, message, details)
 
 
 def error_body(code: str, message: str, details: list[dict[str, str]] | None = None) -> dict[str, Any]:
