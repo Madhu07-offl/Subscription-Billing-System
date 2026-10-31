@@ -279,3 +279,27 @@ def test_subscription_scope_discount_targets_listed_subscriptions_only(client, a
     by_sub = {i["subscriptionId"]: i for i in result["created"]}
     assert by_sub[listed["id"]]["discountTotal"] == "100.00"
     assert by_sub[other["id"]]["discountTotal"] == "0.00"
+
+
+def test_twelve_month_subscription_produces_exactly_twelve_invoices(client, admin_headers, cat, customer):
+    start = TODAY - timedelta(days=400)
+    expiry = add_months(start, 12)  # a period starting ON expiry would be a 13th: expiry is exclusive
+    sub = make_subscription(client, admin_headers, customer, cat, start=start, expiry=expiry)
+
+    result = run_billing(client, admin_headers, [sub["id"]], as_of=expiry + timedelta(days=60))
+    assert result["counts"]["created"] == 12
+    starts = sorted(i["periodStart"] for i in result["created"])
+    assert starts == [str(d) for d in periods_until(start, expiry + timedelta(days=60), expiry)]
+    assert starts[-1] < str(expiry)
+    again = run_billing(client, admin_headers, [sub["id"]], as_of=expiry + timedelta(days=60))
+    assert again["counts"] == {"due": 0, "created": 0, "alreadyBilled": 0, "failed": 0}
+    assert len(invoices_of(client, admin_headers, sub["id"])) == 12
+
+
+def test_due_preview_excludes_a_period_starting_on_expiry(client, admin_headers, cat, customer):
+    start = TODAY - timedelta(days=40)
+    sub = make_subscription(client, admin_headers, customer, cat, start=start, expiry=start + timedelta(days=30))
+    set_subscription(sub["id"], next_billing_date=start + timedelta(days=30))  # next period would start on expiry
+    due = client.get(f"{API}/billing/due?limit=100", headers=admin_headers).json()["data"]
+    assert sub["id"] not in {d["subscriptionId"] for d in due}
+    assert run_billing(client, admin_headers, [sub["id"]])["counts"]["due"] == 0

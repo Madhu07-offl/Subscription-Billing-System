@@ -1,8 +1,8 @@
 """The billing run (API.md section 3, rule 8).
 
 One transaction per subscription: it either gets every invoice it owes or none, and a failure never blocks the
-others. Missed periods are caught up in a loop (one invoice per period) but no period may start after
-expiry_date. A unique-index violation on (subscription, period start) means the period is already billed: counted
+others. Missed periods are caught up in a loop (one invoice per period) but a period must start strictly before
+expiry_date (exclusive). A unique-index violation on (subscription, period start) means the period is already billed: counted
 as alreadyBilled, not failed. A dry run executes the very same code and rolls back, so what it reports is exactly
 what a real run would create.
 """
@@ -46,7 +46,7 @@ def _is_billable(sub: Subscription, as_of: date) -> bool:
         and sub.next_billing_date is not None
         and sub.next_billing_date <= as_of
         and sub.expiry_date is not None
-        and sub.next_billing_date <= sub.expiry_date  # never start a period after expiry
+        and sub.next_billing_date < sub.expiry_date  # a period must start strictly before expiry
     )
 
 
@@ -61,7 +61,7 @@ def list_due(db: Session, as_of: date | None, params: PageParams):
         v.status == "active",
         v.is_paused.is_(False),
         v.next_billing_date <= as_of,
-        v.next_billing_date <= v.expiry_date,
+        v.next_billing_date < v.expiry_date,
         ~already,
     )
     rows, meta = paginate(db, stmt.order_by(v.next_billing_date, v.number), params)
@@ -195,7 +195,7 @@ def run_billing(db: Session, body: BillingRunRequest | None, user: User) -> Bill
         Subscription.status == "active",
         Subscription.is_paused.is_(False),
         Subscription.next_billing_date <= as_of,
-        Subscription.next_billing_date <= Subscription.expiry_date,
+        Subscription.next_billing_date < Subscription.expiry_date,
     )
     if body.subscription_ids is not None:
         stmt = stmt.where(Subscription.id.in_(body.subscription_ids))
