@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { Toast, initials } from './ui';
+import { logout as apiLogout, BASE_URL, USE_MOCK } from './api';
+console.log('%c[API TARGET]', 'background:#141615;color:#bdf3a0;padding:2px 6px;border-radius:4px', USE_MOCK ? 'MOCK DATA (offline)' : BASE_URL);
 import {
   Login, Dashboard, Subscriptions, SubscriptionDetail,
   Invoices, InvoiceDetail, Billing, Products, Plans, Customers, Discounts, Taxes, Users,
@@ -95,7 +97,7 @@ export default function App() {
 
   const notify = useCallback((msg, bad=false) => setToast({ msg, bad, k:Date.now() }), []);
   const login  = u => { localStorage.setItem('bl_user', JSON.stringify(u)); setUser(u); };
-  const logout = () => { localStorage.removeItem('bl_user'); setUser(null); };
+  const logout = () => { apiLogout(); localStorage.removeItem('bl_user'); setUser(null); };
 
   if (!user) return <Login onLogin={login} />;
 

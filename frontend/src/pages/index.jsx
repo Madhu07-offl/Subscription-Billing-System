@@ -1,10 +1,85 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { api, db } from '../api';
+import { api, ApiError } from '../api';
 import { inr, nice, initials, Badge, Stat, Flow, Modal, Empty, Loading, useAsync, Field } from '../ui';
 
 /* ============================== LOGIN ============================== */
+function HalftoneWordmark({ text = 'Brightloop' }) {
+  const canvasRef = useRef(null);
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    const canvas = canvasRef.current, wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const mouse = { x: -9999, y: -9999 };
+    let dots = [], raf;
+
+    function build() {
+      const w = wrap.clientWidth, h = wrap.clientHeight;
+      if (!w || !h) return;
+      canvas.width = w * dpr; canvas.height = h * dpr;
+      canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const off = document.createElement('canvas');
+      off.width = w; off.height = h;
+      const o = off.getContext('2d');
+      let font = 20;
+      o.font = `800 ${font}px Outfit, sans-serif`;
+      const base = o.measureText(text).width || 1;
+      font = Math.min(h * 0.46, font * (w * 0.94) / base);
+      o.font = `800 ${font}px Outfit, sans-serif`;
+      o.textAlign = 'center'; o.textBaseline = 'middle';
+      o.fillStyle = '#fff';
+      o.fillText(text, w / 2, h / 2);
+      const img = o.getImageData(0, 0, w, h).data;
+      const gap = Math.max(5, Math.round(font / 24));
+      dots = [];
+      for (let y = 0; y < h; y += gap)
+        for (let x = 0; x < w; x += gap)
+          if (img[(y * w + x) * 4 + 3] > 130)
+            dots.push({ x, y, hx: x, hy: y, vx: 0, vy: 0 });
+    }
+    function tick() {
+      const w = canvas.width / dpr, h = canvas.height / dpr;
+      ctx.clearRect(0, 0, w, h);
+      const R = 68;
+      for (const d of dots) {
+        const dx = d.x - mouse.x, dy = d.y - mouse.y, d2 = dx * dx + dy * dy;
+        if (d2 < R * R) {
+          const dist = Math.sqrt(d2) || 1, f = (R - dist) / R * 4.2;
+          d.vx += (dx / dist) * f; d.vy += (dy / dist) * f;
+        }
+        d.vx += (d.hx - d.x) * 0.075; d.vy += (d.hy - d.y) * 0.075;
+        d.vx *= 0.84; d.vy *= 0.84;
+        d.x += d.vx; d.y += d.vy;
+        const sp = Math.abs(d.vx) + Math.abs(d.vy);
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, 1.5, 0, 6.3);
+        ctx.fillStyle = sp > 1.1 ? '#a48df5' : '#bdf3a0';
+        ctx.fill();
+      }
+      raf = requestAnimationFrame(tick);
+    }
+    build(); tick();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(build);
+    const onMove = e => { const r = canvas.getBoundingClientRect(); mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top; };
+    const onLeave = () => { mouse.x = -9999; mouse.y = -9999; };
+    const onResize = () => build();
+    canvas.addEventListener('mousemove', onMove);
+    canvas.addEventListener('mouseleave', onLeave);
+    window.addEventListener('resize', onResize);
+    return () => {
+      cancelAnimationFrame(raf);
+      canvas.removeEventListener('mousemove', onMove);
+      canvas.removeEventListener('mouseleave', onLeave);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [text]);
+  return <div ref={wrapRef} className="wordmark-wrap"><canvas ref={canvasRef} /></div>;
+}
+
 export function Login({ onLogin }) {
   const [role, setRole]   = useState('admin');
   const [email, setEmail] = useState('admin@brightloop.io');
@@ -18,8 +93,15 @@ export function Login({ onLogin }) {
     e.preventDefault();
     if (!pwOk) return setErr('Password needs 8+ characters with an uppercase, a lowercase and a special character.');
     setBusy(true); setErr(null);
-    const { user } = await api.login(email, pw, role);
-    onLogin(user);
+    try {
+      const { user } = await api.login(email, pw, role);
+      onLogin(user);
+    } catch (e) {
+      setErr(e instanceof ApiError
+        ? (e.code === 'UNAUTHENTICATED' ? 'Wrong email or password.' : e.message)
+        : 'Could not reach the server. Is the backend awake?');
+      setBusy(false);
+    }
   };
   const pick = r => {
     setRole(r);
@@ -29,12 +111,14 @@ export function Login({ onLogin }) {
   return (
     <div className="auth">
       <div className="auth-art">
-        <div className="brand" style={{padding:0,color:'#fff'}}><span className="brand-mark">B</span> Brightloop</div>
-        <h2>Run plans, subscriptions<br/>and recurring billing<br/>in one place.</h2>
-        <p>The digital backbone for a business that earns its money every month — not just once.</p>
-        <div style={{display:'flex',flexDirection:'column',gap:11,marginTop:8}}>
-          {['Automatic invoicing on billing day','Taxes and discounts applied for you','Revenue and overdue, answered instantly'].map(t =>
-            <div className="auth-feat" key={t}><span className="tick">✓</span>{t}</div>)}
+        <div className="wordmark-top">Brightloop · billing</div>
+        <HalftoneWordmark text="Brightloop" />
+        <div className="auth-art-foot">
+          <p>Run plans, subscriptions and recurring billing in one place — the digital backbone for a business that earns its money every month, not just once.</p>
+          <div style={{display:'flex',gap:18,flexWrap:'wrap',marginTop:14}}>
+            {['Automatic invoicing','Taxes & discounts','Revenue answered instantly'].map(t =>
+              <div className="auth-feat" key={t}><span className="tick">✓</span>{t}</div>)}
+          </div>
         </div>
       </div>
       <div className="auth-form">
@@ -92,16 +176,20 @@ export function Dashboard() {
   const s   = useAsync(() => api.summary(), []);
   const rev = useAsync(() => api.revenueSeries(), []);
   const inv = useAsync(() => api.invoices({ limit:6 }), []);
+  const up  = useAsync(() => api.subscriptions({ status:'active', limit:50 }), []);
   const nav = useNavigate();
 
   if (s.loading || rev.loading) return <Loading rows={6} />;
   const d = s.data;
-  const series = rev.data.data.map(r => ({ ...r, pending: r.invoiced - r.collected }));
-  const totInv = series.reduce((a,r)=>a+r.invoiced,0), totCol = series.reduce((a,r)=>a+r.collected,0);
-  const rate = totCol / totInv;
+  const series = (rev.data?.data || []).map(r => ({ ...r, pending: Math.max(0, (r.invoiced||0) - (r.collected||0)) }));
+  const totInv = series.reduce((a,r)=>a+(r.invoiced||0),0), totCol = series.reduce((a,r)=>a+(r.collected||0),0);
+  const rate = totInv > 0 ? totCol / totInv : 0;
   const last = series[series.length-1], prev = series[series.length-2];
-  const growth = ((last.invoiced - prev.invoiced) / prev.invoiced * 100).toFixed(1);
-  const upcoming = db.subscriptions.filter(x => x.status==='active' && x.nextBillingDate)
+  const growth = (last && prev && prev.invoiced > 0)
+    ? ((last.invoiced - prev.invoiced) / prev.invoiced * 100).toFixed(1)
+    : null;
+  const upcoming = (up.data?.data || [])
+    .filter(x => x.nextBillingDate)
     .sort((a,b)=>a.nextBillingDate.localeCompare(b.nextBillingDate)).slice(0,4);
   const k = n => '₹' + (n >= 100000 ? (n/100000).toFixed(2)+'L' : (n/1000).toFixed(1)+'k');
 
@@ -148,8 +236,8 @@ export function Dashboard() {
             <div style={{fontSize:13,opacity:.7}}>Monthly recurring revenue</div>
             <div className="mid-num" style={{margin:'14px 0 18px'}}>{inr(d.mrr)}</div>
             <div style={{display:'flex',alignItems:'center',gap:12}}>
-              <b style={{fontSize:14}}>+{growth}%</b>
-              <div className="progress" style={{flex:1}}><i style={{width:`${Math.min(95,50+ +growth)}%`}} /></div>
+              <b style={{fontSize:14}}>{growth === null ? '—' : `${growth > 0 ? '+' : ''}${growth}%`}</b>
+              <div className="progress" style={{flex:1}}><i style={{width:`${Math.min(95, Math.max(8, 50 + (+growth || 0)))}%`}} /></div>
             </div>
           </div>
           <div className="tile tile-lav">
@@ -186,6 +274,7 @@ export function Dashboard() {
             <span className="spacer" /><button className="btn btn-sm" onClick={()=>nav('/billing')}>Run billing</button>
           </div>
           <div className="timeline" style={{marginTop:16}}>
+            {upcoming.length === 0 && <div className="dim" style={{padding:'6px 0 2px'}}>No active subscriptions due yet.</div>}
             {upcoming.map((u,i) => (
               <div key={u.id} className={`tl-item ${i===upcoming.length-1?'last':''}`} style={{display:'flex',justifyContent:'space-between',gap:12,cursor:'pointer'}}
                    onClick={()=>nav(`/subscriptions/${u.id}`)}>
@@ -226,7 +315,7 @@ export function Subscriptions({ toast, user }) {
   const [open, setOpen] = useState(false);
   const [v, bump]       = useState(0);
   const nav = useNavigate();
-  const mine = user.role === 'customer' ? 'c1' : undefined;
+  const mine = undefined; // the server scopes customers to their own records
   const r = useAsync(() => api.subscriptions({ status: tab==='all'?undefined:tab, q, customerId: mine }), [tab, q, v, mine]);
 
   return (
@@ -267,9 +356,19 @@ export function Subscriptions({ toast, user }) {
 }
 
 function NewSubscription({ onClose, onDone }) {
-  const [f, setF] = useState({ customerId:'c1', planId:'pl1', productId:'p1', quantity:1, startDate:new Date().toISOString().slice(0,10) });
+  const [f, setF] = useState({ customerId:'', planId:'', productId:'', quantity:1, startDate:new Date().toISOString().slice(0,10) });
   const [err, setErr] = useState(null); const [busy, setBusy] = useState(false);
   const set = k => e => setF({ ...f, [k]: e.target.value });
+  const opts = useAsync(() => Promise.all([
+    api.customers({ limit:100 }), api.plans({ limit:100 }), api.products({ limit:100 }),
+  ]).then(([c,p,pr]) => ({ customers:c.data||[], plans:p.data||[], products:pr.data||[] })), []);
+  useEffect(() => {
+    const o = opts.data; if (!o) return;
+    setF(cur => ({ ...cur,
+      customerId: cur.customerId || o.customers[0]?.id || '',
+      planId:     cur.planId     || o.plans[0]?.id     || '',
+      productId:  cur.productId  || o.products[0]?.id  || '' }));
+  }, [opts.data]);
 
   const save = async () => {
     setBusy(true); setErr(null);
@@ -281,20 +380,20 @@ function NewSubscription({ onClose, onDone }) {
   return (
     <Modal title="New subscription" onClose={onClose}
       footer={<><button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={save} disabled={busy}>{busy?'Creating…':'Create draft'}</button></>}>
+        <button className="btn btn-primary" onClick={save} disabled={busy || opts.loading || !f.customerId}>{busy?'Creating…':'Create draft'}</button></>}>
       {err && <div className="err-txt" style={{marginBottom:12}}>{err.message}</div>}
       <Field label="Customer">
         <select className="input" value={f.customerId} onChange={set('customerId')}>
-          {db.customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+          {(opts.data?.customers || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
       </Field>
       <Field label="Plan" hint="Minimum quantity and availability dates are enforced by the plan.">
         <select className="input" value={f.planId} onChange={set('planId')}>
-          {db.plans.map(p => <option key={p.id} value={p.id}>{p.name} · {p.billingPeriod} · min {p.minQuantity}</option>)}</select>
+          {(opts.data?.plans || []).map(p => <option key={p.id} value={p.id}>{p.name} · {p.billingPeriod} · min {p.minQuantity}</option>)}</select>
       </Field>
       <div className="row">
         <Field label="Product">
           <select className="input" value={f.productId} onChange={set('productId')}>
-            {db.products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+            {(opts.data?.products || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
         </Field>
         <Field label="Quantity" error={fieldErr('quantity')}>
           <input className={`input ${fieldErr('quantity')?'err':''}`} type="number" min="1" value={f.quantity} onChange={set('quantity')} />
@@ -311,6 +410,7 @@ export function SubscriptionDetail({ toast }) {
   const [v, bump] = useState(0);
   const r = useAsync(() => api.subscription(id), [id, v]);
   const h = useAsync(() => api.subscriptionHistory(id), [id, v]);
+  const pl = useAsync(() => api.plans({ limit:100 }), []);
   const act = useCallback(async a => {
     try { await api.transition(id, a); bump(x=>x+1); toast(`Subscription ${a}d.`); }
     catch (e) { toast(e.message, true); }
@@ -319,7 +419,7 @@ export function SubscriptionDetail({ toast }) {
   if (r.loading) return <Loading rows={7} />;
   const s = r.data;
   if (!s) return <Empty title="Not found" />;
-  const plan = db.plans.find(p => p.id === s.planId);
+  const plan = (pl.data?.data || []).find(p => p.id === s.planId) || {};
   const nextLabel = { draft:'Send quotation', quotation:'Confirm', confirmed:'Activate', active:'Close' }[s.status];
 
   return (
@@ -414,7 +514,7 @@ export function Invoices({ user }) {
   const [tab, setTab] = useState('all');
   const [q, setQ] = useState('');
   const nav = useNavigate();
-  const mine = user.role === 'customer' ? 'c1' : undefined;
+  const mine = undefined; // the server scopes customers to their own records
   const r = useAsync(() => api.invoices({
     status: ['all','overdue'].includes(tab) ? undefined : tab,
     isOverdue: tab === 'overdue' || undefined, q, customerId: mine,
@@ -569,9 +669,15 @@ export function Billing({ toast }) {
 
   const run = async dryRun => {
     setBusy(true);
-    const res = await api.billingRun({ dryRun });
-    setResult(res); setBusy(false);
-    if (!dryRun) { bump(x=>x+1); toast(`${res.createdCount} invoice(s) created.`); }
+    try {
+      const res = await api.billingRun({ dryRun });
+      setResult(res);
+      if (!dryRun) { bump(x=>x+1); toast(`${res.createdCount} invoice(s) created.`); }
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Billing run failed — could not reach the server.', true);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

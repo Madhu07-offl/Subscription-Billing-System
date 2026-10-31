@@ -14,3 +14,6 @@ internal-notes/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Frontend API base URL is a public URL, not a secret — evaluators need it to run the app.
+!frontend/.env
