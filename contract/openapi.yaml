@@ -1,0 +1,2075 @@
+openapi: 3.0.3
+info:
+  title: Brightloop Subscription Billing API
+  version: 1.0.0
+  description: |
+    Contract between the frontend and the backend. Frozen at v1 after Gate 1; changes go through a reviewed PR.
+
+    **Roles**: `admin` (whole system), `staff` (day-to-day work, limited), `customer` (portal, own data only).
+    Each operation lists who may call it. Customers calling a shared endpoint (for example `GET /subscriptions`)
+    are automatically scoped to their own records by the server.
+
+    **Conventions**
+    - Base path `/api/v1`, JSON bodies, `Authorization: Bearer <jwt>` on everything except public auth endpoints.
+    - Ids are UUID strings. Dates are `YYYY-MM-DD`. Timestamps are ISO 8601 UTC.
+    - Money is a decimal number with two decimal places (for example `560.00`), in the single system currency.
+    - Lists are paginated: `?page=1&limit=20` (limit max 100) and return `{ data: [...], meta: {...} }`.
+    - Every error uses the `Error` shape. Standard statuses: 400 `VALIDATION_ERROR`, 401 `UNAUTHENTICATED`,
+      403 `FORBIDDEN`, 404 `NOT_FOUND`, 409 `CONFLICT` (duplicate or wrong state), 422 `BUSINESS_RULE`.
+    - Extra detail for every endpoint lives in `contract/API.md`.
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Local development (Prism mock uses the same path)
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+    description: Signup, login, password reset, own profile
+  - name: Users
+    description: Staff and user management (admin)
+  - name: Customers
+    description: Customer records
+  - name: Products
+    description: Products and their variants
+  - name: Plans
+    description: Recurring plans
+  - name: Quotation Templates
+    description: Reusable quotation starting points
+  - name: Subscriptions
+    description: Subscriptions and their lifecycle
+  - name: Billing
+    description: Bulk invoice generation
+  - name: Invoices
+    description: Invoices and their lifecycle
+  - name: Taxes
+    description: Tax rules
+  - name: Discounts
+    description: Discount rules
+  - name: Payments
+    description: Payments recorded against invoices
+  - name: Reports
+    description: Finance dashboard data
+
+paths:
+  # ------------------------------------------------------------------ AUTH
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Customer signs up
+      description: |
+        Public. Creates a customer user plus its customer record. Email must be unique (409 if taken).
+        Password must be longer than 8 characters with an uppercase letter, a lowercase letter and a special character.
+      operationId: signup
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SignupRequest' }
+      responses:
+        '201':
+          description: Account created and logged in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      description: Public. Returns a JWT. Wrong email or password returns 401. Deactivated users get 403.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request a password reset link
+      description: |
+        Public. Always returns 202 whether or not the email exists, so accounts cannot be probed.
+        If the email is registered, a reset link with a single-use token (valid 30 minutes) is emailed.
+      operationId: forgotPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ForgotPasswordRequest' }
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+        default: { $ref: '#/components/responses/Error' }
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Set a new password using the emailed token
+      description: Public. Token must be valid, unused and unexpired (400 otherwise). New password follows the password rules.
+      operationId: resetPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResetPasswordRequest' }
+      responses:
+        '200':
+          description: Password changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+        default: { $ref: '#/components/responses/Error' }
+  /auth/change-password:
+    post:
+      tags: [Auth]
+      summary: Change own password
+      description: Any logged-in user. Requires the current password.
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
+      responses:
+        '200':
+          description: Password changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+        default: { $ref: '#/components/responses/Error' }
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      description: Any logged-in user. Used by the frontend to restore a session and decide which screens to show.
+      operationId: getMe
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Auth]
+      summary: Update own profile
+      description: Any logged-in user. Customers can also update their customer details (phone, company, address).
+      operationId: updateMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProfileUpdate' }
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ----------------------------------------------------------------- USERS
+  /users:
+    get:
+      tags: [Users]
+      summary: List users
+      description: Admin only. Filter by role and search by name or email.
+      operationId: listUsers
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Q'
+        - name: role
+          in: query
+          schema: { $ref: '#/components/schemas/Role' }
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Page of users
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserList' }
+        default: { $ref: '#/components/responses/Error' }
+  /users/staff:
+    post:
+      tags: [Users]
+      summary: Add a staff member
+      description: Admin only. The only way to create a staff user. Email must be unique (409). Initial password follows the password rules.
+      operationId: createStaff
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffCreate' }
+      responses:
+        '201':
+          description: Staff user created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        default: { $ref: '#/components/responses/Error' }
+  /users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Users]
+      summary: Get a user
+      description: Admin only.
+      operationId: getUser
+      responses:
+        '200':
+          description: The user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Users]
+      summary: Update or deactivate a user
+      description: Admin only. Set `isActive=false` to block login without deleting history. An admin cannot deactivate themselves (422).
+      operationId: updateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserUpdate' }
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ------------------------------------------------------------- CUSTOMERS
+  /customers:
+    get:
+      tags: [Customers]
+      summary: List customers
+      description: Admin, staff. Search by name, email or company.
+      operationId: listCustomers
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Q'
+      responses:
+        '200':
+          description: Page of customers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Customers]
+      summary: Create a customer
+      description: Admin, staff. For customers who did not sign up themselves, for example a company a sales rep is quoting. No login is created.
+      operationId: createCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomerInput' }
+      responses:
+        '201':
+          description: Created customer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        default: { $ref: '#/components/responses/Error' }
+  /customers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Customers]
+      summary: Get a customer
+      description: Admin, staff.
+      operationId: getCustomer
+      responses:
+        '200':
+          description: The customer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Customers]
+      summary: Update a customer
+      description: Admin, staff.
+      operationId: updateCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomerInput' }
+      responses:
+        '200':
+          description: Updated customer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # -------------------------------------------------------------- PRODUCTS
+  /products:
+    get:
+      tags: [Products]
+      summary: List products
+      description: All logged-in roles can read. Customers see only active products.
+      operationId: listProducts
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Q'
+        - name: type
+          in: query
+          schema: { $ref: '#/components/schemas/ProductType' }
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Page of products
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Products]
+      summary: Create a product
+      description: Admin only. Variants can be sent inline or added later.
+      operationId: createProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductInput' }
+      responses:
+        '201':
+          description: Created product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        default: { $ref: '#/components/responses/Error' }
+  /products/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Products]
+      summary: Get a product with its variants
+      description: All logged-in roles.
+      operationId: getProduct
+      responses:
+        '200':
+          description: The product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Products]
+      summary: Update a product
+      description: Admin only. Changing a price does not change existing subscription lines or invoices.
+      operationId: updateProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductInput' }
+      responses:
+        '200':
+          description: Updated product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Products]
+      summary: Archive a product
+      description: Admin only. Soft delete (`isActive=false`) so old subscriptions and invoices keep working. 204 on success.
+      operationId: archiveProduct
+      responses:
+        '204': { description: Archived }
+        default: { $ref: '#/components/responses/Error' }
+  /products/{id}/variants:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Products]
+      summary: Add a variant to a product
+      description: Admin only. A variant is an attribute value with a price adjustment, for example Brand = Odoo adds 560.00.
+      operationId: createVariant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VariantInput' }
+      responses:
+        '201':
+          description: Created variant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Variant' }
+        default: { $ref: '#/components/responses/Error' }
+  /products/{id}/variants/{variantId}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+      - name: variantId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Products]
+      summary: Update a variant
+      description: Admin only.
+      operationId: updateVariant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VariantInput' }
+      responses:
+        '200':
+          description: Updated variant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Variant' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Products]
+      summary: Remove a variant
+      description: Admin only. Variants already used on a subscription line are archived instead of removed. 204 on success.
+      operationId: deleteVariant
+      responses:
+        '204': { description: Removed }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ----------------------------------------------------------------- PLANS
+  /plans:
+    get:
+      tags: [Plans]
+      summary: List plans
+      description: All logged-in roles. Customers see only plans that are active and inside their availability dates.
+      operationId: listPlans
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Q'
+        - name: billingPeriod
+          in: query
+          schema: { $ref: '#/components/schemas/BillingPeriod' }
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Page of plans
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Plans]
+      summary: Create a plan
+      description: Admin only. The four flags decide what can happen to subscriptions on this plan.
+      operationId: createPlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlanInput' }
+      responses:
+        '201':
+          description: Created plan
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plan' }
+        default: { $ref: '#/components/responses/Error' }
+  /plans/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Plans]
+      summary: Get a plan
+      description: All logged-in roles.
+      operationId: getPlan
+      responses:
+        '200':
+          description: The plan
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plan' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Plans]
+      summary: Update a plan
+      description: Admin only. Changes apply to future billing only; issued invoices are untouched.
+      operationId: updatePlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlanInput' }
+      responses:
+        '200':
+          description: Updated plan
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plan' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Plans]
+      summary: Deactivate a plan
+      description: Admin only. Soft delete (`isActive=false`). Existing subscriptions keep running. 204 on success.
+      operationId: deactivatePlan
+      responses:
+        '204': { description: Deactivated }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ------------------------------------------------------ QUOTATION TEMPLATES
+  /quotation-templates:
+    get:
+      tags: [Quotation Templates]
+      summary: List quotation templates
+      description: Admin, staff.
+      operationId: listQuotationTemplates
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Q'
+      responses:
+        '200':
+          description: Page of templates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotationTemplateList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Quotation Templates]
+      summary: Create a quotation template
+      description: Admin only. A template fixes the plan, the product lines and how many days a quotation stays valid.
+      operationId: createQuotationTemplate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuotationTemplateInput' }
+      responses:
+        '201':
+          description: Created template
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotationTemplate' }
+        default: { $ref: '#/components/responses/Error' }
+  /quotation-templates/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Quotation Templates]
+      summary: Get a quotation template
+      description: Admin, staff.
+      operationId: getQuotationTemplate
+      responses:
+        '200':
+          description: The template
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotationTemplate' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Quotation Templates]
+      summary: Update a quotation template
+      description: Admin only. Does not change subscriptions already created from it.
+      operationId: updateQuotationTemplate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuotationTemplateInput' }
+      responses:
+        '200':
+          description: Updated template
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotationTemplate' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Quotation Templates]
+      summary: Delete a quotation template
+      description: Admin only. 204 on success.
+      operationId: deleteQuotationTemplate
+      responses:
+        '204': { description: Deleted }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------- SUBSCRIPTIONS
+  /subscriptions:
+    get:
+      tags: [Subscriptions]
+      summary: List subscriptions
+      description: |
+        Admin, staff see all. Customers see only their own. Everyone can see the status, so the team always knows where a subscription stands.
+      operationId: listSubscriptions
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Q'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/SubscriptionStatus' }
+        - name: customerId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: planId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: expiringBefore
+          in: query
+          description: Only subscriptions whose expiry date is on or before this date
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Page of subscriptions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Subscriptions]
+      summary: Create a subscription (Draft)
+      description: |
+        Admin, staff. Creates a `draft` with an auto-generated number (for example SUB-0001).
+        Send `templateId` to start from a quotation template: the plan and lines are copied and any field you also send overrides the template.
+        Line `unitPrice` defaults to product price plus variant adjustment; taxes are resolved from tax rules; totals are computed by the server.
+        Violating the plan minimum quantity or availability dates returns 422.
+      operationId: createSubscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubscriptionInput' }
+      responses:
+        '201':
+          description: Draft subscription
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subscription' }
+        default: { $ref: '#/components/responses/Error' }
+  /subscriptions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Subscriptions]
+      summary: Get a subscription with lines and totals
+      description: Admin, staff, and the owning customer.
+      operationId: getSubscription
+      responses:
+        '200':
+          description: The subscription
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subscription' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Subscriptions]
+      summary: Edit a subscription
+      description: Admin, staff. Allowed only while status is `draft` or `quotation`; otherwise 409. Sending `lines` replaces all lines.
+      operationId: updateSubscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubscriptionUpdate' }
+      responses:
+        '200':
+          description: Updated subscription
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subscription' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Subscriptions]
+      summary: Delete a draft subscription
+      description: Admin, staff. Only `draft` can be deleted (409 otherwise). 204 on success.
+      operationId: deleteSubscription
+      responses:
+        '204': { description: Deleted }
+        default: { $ref: '#/components/responses/Error' }
+  /subscriptions/{id}/send-quotation:
+    post:
+      tags: [Subscriptions]
+      summary: Draft to Quotation
+      description: |
+        Admin, staff. Moves `draft` to `quotation` and sets `quotationValidUntil` (today plus the template validity days, default 30).
+        Requires at least one line and a customer (422 otherwise).
+      operationId: sendQuotation
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Subscription in quotation status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subscription' }
+        default: { $ref: '#/components/responses/Error' }
+  /subscriptions/{id}/confirm:
+    post:
+      tags: [Subscriptions]
+      summary: Quotation to Confirmed
+      description: Admin, staff. Moves `quotation` to `confirmed`. Fails with 422 if the quotation has expired.
+      operationId: confirmSubscription
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Confirmed subscription
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subscription' }
+        default: { $ref: '#/components/responses/Error' }
+  /subscriptions/{id}/activate:
+    post:
+      tags: [Subscriptions]
+      summary: Confirmed to Active
+      description: |
+        Admin, staff. Moves `confirmed` to `active` and sets `nextBillingDate` to the start date.
+        Billing runs only pick up `active`, non-paused subscriptions.
+      operationId: activateSubscription
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Active subscription
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subscription' }
+        default: { $ref: '#/components/responses/Error' }
+  /subscriptions/{id}/close:
+    post:
+      tags: [Subscriptions]
+      summary: Close a subscription (early)
+      description: |
+        Admin, staff, and the owning customer. Moves `active` to `closed`. Only when the plan has `allowEarlyClose=true`, otherwise 422.
+        Subscriptions on plans with `autoClose=true` close by themselves after the expiry date.
+      operationId: closeSubscription
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloseRequest' }
+      responses:
+        '200':
+          description: Closed subscription
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subscription' }
+        default: { $ref: '#/components/responses/Error' }
+  /subscriptions/{id}/pause:
+    post:
+      tags: [Subscriptions]
+      summary: Pause billing
+      description: Admin, staff, and the owning customer. Sets `isPaused=true` on an `active` subscription. Only when the plan has `allowPause=true`, otherwise 422. Paused subscriptions are skipped by billing.
+      operationId: pauseSubscription
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Paused subscription
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subscription' }
+        default: { $ref: '#/components/responses/Error' }
+  /subscriptions/{id}/resume:
+    post:
+      tags: [Subscriptions]
+      summary: Resume a paused subscription
+      description: Admin, staff, and the owning customer. Sets `isPaused=false`. 409 if not paused.
+      operationId: resumeSubscription
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Resumed subscription
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subscription' }
+        default: { $ref: '#/components/responses/Error' }
+  /subscriptions/{id}/renew:
+    post:
+      tags: [Subscriptions]
+      summary: Renew a subscription
+      description: |
+        Admin, staff, and the owning customer. Extends `expiryDate` by one plan term (or to `newExpiryDate`) and reopens a `closed` subscription if it ended naturally.
+        Only when the plan has `allowRenew=true`, otherwise 422.
+      operationId: renewSubscription
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenewRequest' }
+      responses:
+        '200':
+          description: Renewed subscription
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subscription' }
+        default: { $ref: '#/components/responses/Error' }
+  /subscriptions/{id}/invoices:
+    get:
+      tags: [Subscriptions]
+      summary: Invoices of a subscription
+      description: Admin, staff, and the owning customer. Newest first.
+      operationId: listSubscriptionInvoices
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Page of invoices
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceList' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # --------------------------------------------------------------- BILLING
+  /billing/due:
+    get:
+      tags: [Billing]
+      summary: Preview subscriptions due for billing
+      description: Admin, staff. Lists active, non-paused subscriptions whose `nextBillingDate` is on or before `asOf` and that have no invoice yet for that period.
+      operationId: listDueSubscriptions
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: asOf
+          in: query
+          description: Defaults to today
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Page of due subscriptions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DueSubscriptionList' }
+        default: { $ref: '#/components/responses/Error' }
+  /billing/run:
+    post:
+      tags: [Billing]
+      summary: Generate invoices for everything due
+      description: |
+        Admin, staff. Creates one `draft` invoice per due subscription, filled with customer, lines, discounts, taxes and totals,
+        then advances `nextBillingDate`. Safe to run repeatedly: a unique rule on (subscription, billing period) means nothing is billed twice,
+        and anything that failed is reported under `failed` so it can be retried and nothing is skipped silently.
+        Use `dryRun=true` to see what would be created without saving.
+      operationId: runBilling
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BillingRunRequest' }
+      responses:
+        '200':
+          description: Result of the run
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunResult' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # -------------------------------------------------------------- INVOICES
+  /invoices:
+    get:
+      tags: [Invoices]
+      summary: List invoices
+      description: Admin, staff see all. Customers see only their own. Use `isOverdue=true` for the overdue list.
+      operationId: listInvoices
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Q'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/InvoiceStatus' }
+        - name: customerId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: subscriptionId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: isOverdue
+          in: query
+          description: Confirmed invoices past their due date with an amount still due
+          schema: { type: boolean }
+        - name: hasBalance
+          in: query
+          description: true for outstanding invoices, false for fully paid ones
+          schema: { type: boolean }
+        - name: issuedFrom
+          in: query
+          schema: { type: string, format: date }
+        - name: issuedTo
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Page of invoices (without lines)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceList' }
+        default: { $ref: '#/components/responses/Error' }
+  /invoices/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Invoices]
+      summary: Get an invoice with lines and payments
+      description: Admin, staff, and the owning customer.
+      operationId: getInvoice
+      responses:
+        '200':
+          description: The invoice
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        default: { $ref: '#/components/responses/Error' }
+  /invoices/{id}/confirm:
+    post:
+      tags: [Invoices]
+      summary: Draft to Confirmed
+      description: Admin, staff. Locks the invoice, sets the issue date and due date (issue date plus the subscription's payment terms). 409 if not a draft.
+      operationId: confirmInvoice
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Confirmed invoice
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        default: { $ref: '#/components/responses/Error' }
+  /invoices/{id}/cancel:
+    post:
+      tags: [Invoices]
+      summary: Cancel an invoice
+      description: Admin, staff. Allowed for `draft` and `confirmed` invoices with no payments (422 if a payment exists). Releases the billing period for that subscription and any discount usage.
+      operationId: cancelInvoice
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Cancelled invoice
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        default: { $ref: '#/components/responses/Error' }
+  /invoices/{id}/send:
+    post:
+      tags: [Invoices]
+      summary: Email the invoice to the customer
+      description: Admin, staff. Only `confirmed` or `paid` invoices (409 otherwise). Sets `sentAt`. Optional override recipient.
+      operationId: sendInvoice
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SendInvoiceRequest' }
+      responses:
+        '200':
+          description: Invoice with updated `sentAt`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        default: { $ref: '#/components/responses/Error' }
+  /invoices/{id}/print:
+    get:
+      tags: [Invoices]
+      summary: Printable invoice (PDF)
+      description: Admin, staff, and the owning customer. Returns a PDF for printing or download.
+      operationId: printInvoice
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: PDF file
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ----------------------------------------------------------------- TAXES
+  /taxes:
+    get:
+      tags: [Taxes]
+      summary: List tax rules
+      description: Admin, staff.
+      operationId: listTaxes
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Page of taxes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Taxes]
+      summary: Create a tax rule
+      description: Admin only. Taxes apply automatically to lines whose product type matches `appliesToProductTypes` (empty means every type).
+      operationId: createTax
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaxInput' }
+      responses:
+        '201':
+          description: Created tax
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tax' }
+        default: { $ref: '#/components/responses/Error' }
+  /taxes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Taxes]
+      summary: Get a tax rule
+      description: Admin, staff.
+      operationId: getTax
+      responses:
+        '200':
+          description: The tax
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tax' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Taxes]
+      summary: Update a tax rule
+      description: Admin only. Affects future invoices only.
+      operationId: updateTax
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaxInput' }
+      responses:
+        '200':
+          description: Updated tax
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tax' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Taxes]
+      summary: Deactivate a tax rule
+      description: Admin only. Soft delete (`isActive=false`). 204 on success.
+      operationId: deactivateTax
+      responses:
+        '204': { description: Deactivated }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ------------------------------------------------------------- DISCOUNTS
+  /discounts:
+    get:
+      tags: [Discounts]
+      summary: List discount rules
+      description: Admin, staff.
+      operationId: listDiscounts
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Q'
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+        - name: validOn
+          in: query
+          description: Only discounts that are within their dates and not used up on this date
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Page of discounts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscountList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Discounts]
+      summary: Create a discount rule
+      description: |
+        Admin only. Fixed amount or percentage, with optional minimum purchase and minimum quantity, start and end dates and a usage limit.
+        Applies either to specific products (`scope=products`) or to subscriptions (`scope=subscriptions`, empty `subscriptionIds` means all).
+        Once active it is applied automatically on the next invoice and stops when it expires or `usedCount` reaches `usageLimit`.
+      operationId: createDiscount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DiscountInput' }
+      responses:
+        '201':
+          description: Created discount
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Discount' }
+        default: { $ref: '#/components/responses/Error' }
+  /discounts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Discounts]
+      summary: Get a discount rule
+      description: Admin, staff.
+      operationId: getDiscount
+      responses:
+        '200':
+          description: The discount
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Discount' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Discounts]
+      summary: Update a discount rule
+      description: Admin only. `usedCount` cannot be edited. Lowering `usageLimit` below `usedCount` returns 422.
+      operationId: updateDiscount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DiscountInput' }
+      responses:
+        '200':
+          description: Updated discount
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Discount' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Discounts]
+      summary: Deactivate a discount rule
+      description: Admin only. Soft delete (`isActive=false`) so used discounts stay on historic invoices. 204 on success.
+      operationId: deactivateDiscount
+      responses:
+        '204': { description: Deactivated }
+        default: { $ref: '#/components/responses/Error' }
+
+  # -------------------------------------------------------------- PAYMENTS
+  /payments:
+    get:
+      tags: [Payments]
+      summary: List payments
+      description: Admin, staff see all. Customers see only payments on their own invoices.
+      operationId: listPayments
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: invoiceId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: customerId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: method
+          in: query
+          schema: { $ref: '#/components/schemas/PaymentMethod' }
+        - name: paidFrom
+          in: query
+          schema: { type: string, format: date }
+        - name: paidTo
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Page of payments
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Payments]
+      summary: Record a payment against an invoice
+      description: |
+        Admin, staff. The invoice must be `confirmed` (422 otherwise) and `amount` cannot exceed the amount still due (422).
+        When the amount due reaches zero the invoice moves to `paid` automatically.
+      operationId: recordPayment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentInput' }
+      responses:
+        '201':
+          description: Recorded payment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+        default: { $ref: '#/components/responses/Error' }
+  /payments/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Payments]
+      summary: Get a payment
+      description: Admin, staff, and the owning customer.
+      operationId: getPayment
+      responses:
+        '200':
+          description: The payment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Payments]
+      summary: Void a payment
+      description: Admin only. Marks the payment as voided, recalculates the invoice balance and moves a `paid` invoice back to `confirmed`. 204 on success.
+      operationId: voidPayment
+      responses:
+        '204': { description: Voided }
+        default: { $ref: '#/components/responses/Error' }
+
+  # --------------------------------------------------------------- REPORTS
+  /reports/summary:
+    get:
+      tags: [Reports]
+      summary: Finance dashboard summary
+      description: |
+        Admin, staff. One call for the dashboard cards: active subscriptions, revenue collected, amount still owed,
+        overdue invoices, MRR, plus breakdowns. Must respond in under 2 seconds on thousands of subscriptions.
+      operationId: getSummary
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - name: planId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: customerId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Dashboard summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardSummary' }
+        default: { $ref: '#/components/responses/Error' }
+  /reports/revenue:
+    get:
+      tags: [Reports]
+      summary: Revenue over time
+      description: Admin, staff. Invoiced versus collected amounts grouped by period, for the dashboard chart.
+      operationId: getRevenueSeries
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - name: groupBy
+          in: query
+          schema: { type: string, enum: [day, week, month], default: month }
+        - name: planId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Time series
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/RevenuePoint' }
+        default: { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Q:
+      name: q
+      in: query
+      description: Free-text search
+      schema: { type: string }
+    From:
+      name: from
+      in: query
+      description: Start date (inclusive). Defaults to the first day of the current month.
+      schema: { type: string, format: date }
+    To:
+      name: to
+      in: query
+      description: End date (inclusive). Defaults to today.
+      schema: { type: string, format: date }
+
+  responses:
+    Error:
+      description: Error (400, 401, 403, 404, 409, 422 or 500)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    # ---------------------------------------------------------- shared
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [VALIDATION_ERROR, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, CONFLICT, BUSINESS_RULE, INTERNAL]
+            message: { type: string }
+            details:
+              type: array
+              description: Field-level problems for VALIDATION_ERROR
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+    Message:
+      type: object
+      properties:
+        message: { type: string }
+    PageMeta:
+      type: object
+      properties:
+        page: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+        totalPages: { type: integer }
+    Money:
+      type: number
+      format: double
+      multipleOf: 0.01
+      example: 560.00
+    Address:
+      type: object
+      properties:
+        line1: { type: string }
+        line2: { type: string }
+        city: { type: string }
+        state: { type: string }
+        postalCode: { type: string }
+        country: { type: string }
+    CustomerRef:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+
+    # ------------------------------------------------------------ auth
+    Role:
+      type: string
+      enum: [admin, staff, customer]
+    Password:
+      type: string
+      format: password
+      minLength: 9
+      pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{9,}$'
+      description: More than 8 characters with an uppercase letter, a lowercase letter and a special character.
+      example: Brightloop#2026
+    SignupRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        password: { $ref: '#/components/schemas/Password' }
+        company: { type: string }
+        phone: { type: string }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+    AuthResponse:
+      type: object
+      properties:
+        token: { type: string, description: JWT }
+        expiresIn: { type: integer, description: Seconds until the token expires }
+        user: { $ref: '#/components/schemas/User' }
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+    ResetPasswordRequest:
+      type: object
+      required: [token, newPassword]
+      properties:
+        token: { type: string }
+        newPassword: { $ref: '#/components/schemas/Password' }
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string, format: password }
+        newPassword: { $ref: '#/components/schemas/Password' }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/Role' }
+        isActive: { type: boolean }
+        customerId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Set only for customers
+        createdAt: { type: string, format: date-time }
+    ProfileUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        company: { type: string }
+        address: { $ref: '#/components/schemas/Address' }
+    StaffCreate:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        password: { $ref: '#/components/schemas/Password' }
+    UserUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        isActive: { type: boolean }
+    UserList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/User' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+
+    # -------------------------------------------------------- customers
+    CustomerInput:
+      type: object
+      required: [name, email]
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string }
+        company: { type: string }
+        taxId: { type: string }
+        address: { $ref: '#/components/schemas/Address' }
+    Customer:
+      allOf:
+        - $ref: '#/components/schemas/CustomerInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            hasLogin: { type: boolean }
+            activeSubscriptions: { type: integer }
+            createdAt: { type: string, format: date-time }
+    CustomerList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Customer' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+
+    # --------------------------------------------------------- products
+    ProductType:
+      type: string
+      enum: [software, addon, service, goods]
+    ProductInput:
+      type: object
+      required: [name, type, salesPrice, costPrice]
+      properties:
+        name: { type: string, example: Brightloop CRM }
+        type: { $ref: '#/components/schemas/ProductType' }
+        salesPrice: { $ref: '#/components/schemas/Money' }
+        costPrice: { $ref: '#/components/schemas/Money' }
+        notes: { type: string }
+        isActive: { type: boolean, default: true }
+        variants:
+          type: array
+          description: Optional on create
+          items: { $ref: '#/components/schemas/VariantInput' }
+    Product:
+      allOf:
+        - $ref: '#/components/schemas/ProductInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            variants:
+              type: array
+              items: { $ref: '#/components/schemas/Variant' }
+            createdAt: { type: string, format: date-time }
+    VariantInput:
+      type: object
+      required: [attribute, value, extraPrice]
+      properties:
+        attribute: { type: string, example: Brand }
+        value: { type: string, example: Odoo }
+        extraPrice:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: Added to the product sales price when this variant is chosen
+          example: 560.00
+    Variant:
+      allOf:
+        - $ref: '#/components/schemas/VariantInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            productId: { type: string, format: uuid }
+    ProductList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Product' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+
+    # ------------------------------------------------------------ plans
+    BillingPeriod:
+      type: string
+      enum: [daily, weekly, monthly, yearly]
+    PlanInput:
+      type: object
+      required: [name, price, billingPeriod, minQuantity, availableFrom]
+      properties:
+        name: { type: string, example: Business Monthly }
+        price: { $ref: '#/components/schemas/Money' }
+        billingPeriod: { $ref: '#/components/schemas/BillingPeriod' }
+        minQuantity: { type: integer, minimum: 1, default: 1 }
+        availableFrom: { type: string, format: date }
+        availableTo:
+          type: string
+          format: date
+          nullable: true
+          description: Null means no end date
+        autoClose:
+          type: boolean
+          description: Subscriptions close by themselves after their expiry date
+          default: false
+        allowEarlyClose: { type: boolean, default: false }
+        allowPause: { type: boolean, default: false }
+        allowRenew: { type: boolean, default: true }
+        isActive: { type: boolean, default: true }
+    Plan:
+      allOf:
+        - $ref: '#/components/schemas/PlanInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+    PlanList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Plan' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+
+    # ------------------------------------------------ quotation templates
+    TemplateLine:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId: { type: string, format: uuid }
+        variantId: { type: string, format: uuid, nullable: true }
+        quantity: { type: integer, minimum: 1 }
+    QuotationTemplateInput:
+      type: object
+      required: [name, planId, validityDays, lines]
+      properties:
+        name: { type: string, example: Enterprise yearly starter }
+        planId: { type: string, format: uuid }
+        validityDays:
+          type: integer
+          minimum: 1
+          description: How many days a quotation made from this template stays valid
+          example: 30
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/TemplateLine' }
+        notes: { type: string }
+    QuotationTemplate:
+      allOf:
+        - $ref: '#/components/schemas/QuotationTemplateInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            planName: { type: string }
+            createdAt: { type: string, format: date-time }
+    QuotationTemplateList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/QuotationTemplate' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+
+    # ---------------------------------------------------- subscriptions
+    SubscriptionStatus:
+      type: string
+      enum: [draft, quotation, confirmed, active, closed]
+    PaymentTerms:
+      type: string
+      enum: [immediate, net_15, net_30, net_45, net_60]
+      description: Invoice due date is issue date plus the term
+    LineInput:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId: { type: string, format: uuid }
+        variantId: { type: string, format: uuid, nullable: true }
+        quantity: { type: integer, minimum: 1 }
+        unitPrice:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: Optional override; defaults to product sales price plus variant extra price
+    SubscriptionLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        productName: { type: string }
+        variantId: { type: string, format: uuid, nullable: true }
+        variantLabel: { type: string, nullable: true, example: Brand Odoo }
+        quantity: { type: integer }
+        unitPrice: { $ref: '#/components/schemas/Money' }
+        taxId: { type: string, format: uuid, nullable: true }
+        taxName: { type: string, nullable: true }
+        taxRate: { type: number, nullable: true }
+        taxAmount: { $ref: '#/components/schemas/Money' }
+        amount:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: quantity times unitPrice, before tax
+    SubscriptionInput:
+      type: object
+      required: [customerId]
+      properties:
+        customerId: { type: string, format: uuid }
+        templateId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Start from a quotation template
+        planId: { type: string, format: uuid, description: Required unless taken from the template }
+        startDate: { type: string, format: date }
+        expiryDate: { type: string, format: date }
+        paymentTerms: { $ref: '#/components/schemas/PaymentTerms' }
+        lines:
+          type: array
+          description: Required unless taken from the template
+          items: { $ref: '#/components/schemas/LineInput' }
+        notes: { type: string }
+    SubscriptionUpdate:
+      type: object
+      properties:
+        customerId: { type: string, format: uuid }
+        planId: { type: string, format: uuid }
+        startDate: { type: string, format: date }
+        expiryDate: { type: string, format: date }
+        paymentTerms: { $ref: '#/components/schemas/PaymentTerms' }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/LineInput' }
+        notes: { type: string }
+    Subscription:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: string, example: SUB-0001 }
+        status: { $ref: '#/components/schemas/SubscriptionStatus' }
+        isPaused: { type: boolean }
+        customer: { $ref: '#/components/schemas/CustomerRef' }
+        plan:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            billingPeriod: { $ref: '#/components/schemas/BillingPeriod' }
+            allowEarlyClose: { type: boolean }
+            allowPause: { type: boolean }
+            allowRenew: { type: boolean }
+        templateId: { type: string, format: uuid, nullable: true }
+        startDate: { type: string, format: date }
+        expiryDate: { type: string, format: date }
+        paymentTerms: { $ref: '#/components/schemas/PaymentTerms' }
+        quotationValidUntil: { type: string, format: date, nullable: true }
+        nextBillingDate: { type: string, format: date, nullable: true }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/SubscriptionLine' }
+        subtotal: { $ref: '#/components/schemas/Money' }
+        taxTotal: { $ref: '#/components/schemas/Money' }
+        total: { $ref: '#/components/schemas/Money' }
+        notes: { type: string }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        closedAt: { type: string, format: date-time, nullable: true }
+        closeReason: { type: string, nullable: true }
+    SubscriptionList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Subscription' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+    CloseRequest:
+      type: object
+      properties:
+        reason: { type: string }
+    RenewRequest:
+      type: object
+      properties:
+        newExpiryDate:
+          type: string
+          format: date
+          description: Defaults to the current expiry plus one plan term
+
+    # ---------------------------------------------------------- billing
+    BillingRunRequest:
+      type: object
+      properties:
+        asOf:
+          type: string
+          format: date
+          description: Defaults to today
+        subscriptionIds:
+          type: array
+          description: Limit the run to these subscriptions; omit for all due
+          items: { type: string, format: uuid }
+        dryRun: { type: boolean, default: false }
+    DueSubscription:
+      type: object
+      properties:
+        subscriptionId: { type: string, format: uuid }
+        number: { type: string }
+        customer: { $ref: '#/components/schemas/CustomerRef' }
+        nextBillingDate: { type: string, format: date }
+        estimatedTotal: { $ref: '#/components/schemas/Money' }
+    DueSubscriptionList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/DueSubscription' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+    BillingRunResult:
+      type: object
+      properties:
+        runId: { type: string, format: uuid }
+        asOf: { type: string, format: date }
+        dryRun: { type: boolean }
+        counts:
+          type: object
+          properties:
+            due: { type: integer }
+            created: { type: integer }
+            alreadyBilled: { type: integer }
+            failed: { type: integer }
+        created:
+          type: array
+          items: { $ref: '#/components/schemas/InvoiceSummary' }
+        failed:
+          type: array
+          items:
+            type: object
+            properties:
+              subscriptionId: { type: string, format: uuid }
+              number: { type: string }
+              reason: { type: string }
+
+    # --------------------------------------------------------- invoices
+    InvoiceStatus:
+      type: string
+      enum: [draft, confirmed, paid, cancelled]
+    InvoiceLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        description: { type: string }
+        quantity: { type: integer }
+        unitPrice: { $ref: '#/components/schemas/Money' }
+        discountId: { type: string, format: uuid, nullable: true }
+        discountAmount: { $ref: '#/components/schemas/Money' }
+        taxId: { type: string, format: uuid, nullable: true }
+        taxName: { type: string, nullable: true }
+        taxRate: { type: number, nullable: true }
+        taxAmount: { $ref: '#/components/schemas/Money' }
+        amount:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: quantity times unitPrice minus discountAmount, before tax
+    InvoiceSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: string, example: INV-2026-0001 }
+        status: { $ref: '#/components/schemas/InvoiceStatus' }
+        subscriptionId: { type: string, format: uuid }
+        subscriptionNumber: { type: string }
+        customer: { $ref: '#/components/schemas/CustomerRef' }
+        periodStart: { type: string, format: date }
+        periodEnd: { type: string, format: date }
+        issueDate: { type: string, format: date, nullable: true }
+        dueDate: { type: string, format: date, nullable: true }
+        subtotal: { $ref: '#/components/schemas/Money' }
+        discountTotal: { $ref: '#/components/schemas/Money' }
+        taxTotal: { $ref: '#/components/schemas/Money' }
+        total: { $ref: '#/components/schemas/Money' }
+        amountPaid: { $ref: '#/components/schemas/Money' }
+        amountDue: { $ref: '#/components/schemas/Money' }
+        isOverdue: { type: boolean }
+        sentAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    Invoice:
+      allOf:
+        - $ref: '#/components/schemas/InvoiceSummary'
+        - type: object
+          properties:
+            lines:
+              type: array
+              items: { $ref: '#/components/schemas/InvoiceLine' }
+            payments:
+              type: array
+              items: { $ref: '#/components/schemas/Payment' }
+            customerDetails: { $ref: '#/components/schemas/Customer' }
+            notes: { type: string }
+    InvoiceList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/InvoiceSummary' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+    SendInvoiceRequest:
+      type: object
+      properties:
+        to:
+          type: string
+          format: email
+          description: Defaults to the customer email
+        message: { type: string }
+
+    # ------------------------------------------------------------ taxes
+    TaxInput:
+      type: object
+      required: [name, computation, value]
+      properties:
+        name: { type: string, example: GST 18% }
+        computation:
+          type: string
+          enum: [percentage, fixed]
+        value:
+          type: number
+          description: Percent (for example 18) or a fixed amount per line
+        appliesToProductTypes:
+          type: array
+          description: Empty means every product type
+          items: { $ref: '#/components/schemas/ProductType' }
+        isActive: { type: boolean, default: true }
+    Tax:
+      allOf:
+        - $ref: '#/components/schemas/TaxInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+    TaxList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Tax' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+
+    # -------------------------------------------------------- discounts
+    DiscountInput:
+      type: object
+      required: [name, type, value, scope, startDate]
+      properties:
+        name: { type: string, example: 50+ seats volume discount }
+        type:
+          type: string
+          enum: [percentage, fixed]
+        value:
+          type: number
+          description: Percent (0-100) or a fixed amount
+        minPurchaseAmount: { $ref: '#/components/schemas/Money' }
+        minQuantity: { type: integer, minimum: 1 }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date, nullable: true }
+        usageLimit:
+          type: integer
+          nullable: true
+          description: Maximum number of invoices it can apply to; null means unlimited
+        scope:
+          type: string
+          enum: [products, subscriptions]
+        productIds:
+          type: array
+          description: Used when scope is products
+          items: { type: string, format: uuid }
+        subscriptionIds:
+          type: array
+          description: Used when scope is subscriptions; empty means all subscriptions
+          items: { type: string, format: uuid }
+        isActive: { type: boolean, default: true }
+    Discount:
+      allOf:
+        - $ref: '#/components/schemas/DiscountInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            usedCount: { type: integer }
+            status:
+              type: string
+              enum: [scheduled, running, expired, exhausted, inactive]
+              description: Computed from dates, usage and isActive
+    DiscountList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Discount' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+
+    # --------------------------------------------------------- payments
+    PaymentMethod:
+      type: string
+      enum: [cash, bank_transfer, card, upi, cheque, other]
+    PaymentInput:
+      type: object
+      required: [invoiceId, method, amount, paymentDate]
+      properties:
+        invoiceId: { type: string, format: uuid }
+        method: { $ref: '#/components/schemas/PaymentMethod' }
+        amount: { $ref: '#/components/schemas/Money' }
+        paymentDate: { type: string, format: date }
+        reference:
+          type: string
+          description: Bank reference, cheque number, transaction id
+        note: { type: string }
+    Payment:
+      allOf:
+        - $ref: '#/components/schemas/PaymentInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            invoiceNumber: { type: string }
+            customer: { $ref: '#/components/schemas/CustomerRef' }
+            isVoided: { type: boolean }
+            recordedBy: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+    PaymentList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Payment' }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+
+    # ---------------------------------------------------------- reports
+    DashboardSummary:
+      type: object
+      properties:
+        period:
+          type: object
+          properties:
+            from: { type: string, format: date }
+            to: { type: string, format: date }
+        subscriptions:
+          type: object
+          properties:
+            active: { type: integer }
+            byStatus:
+              type: object
+              additionalProperties: { type: integer }
+              example: { draft: 4, quotation: 7, confirmed: 3, active: 120, closed: 15 }
+        mrr:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: Monthly recurring revenue of active, non-paused subscriptions (yearly plans divided by 12, weekly and daily scaled to a month)
+        revenueInvoiced: { $ref: '#/components/schemas/Money' }
+        revenueCollected:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: Sum of non-voided payments in the period
+        outstanding:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: Amount due on confirmed invoices, as of today
+        overdue:
+          type: object
+          properties:
+            count: { type: integer }
+            amount: { $ref: '#/components/schemas/Money' }
+        invoicesByStatus:
+          type: object
+          additionalProperties: { type: integer }
+        paymentsByMethod:
+          type: array
+          items:
+            type: object
+            properties:
+              method: { $ref: '#/components/schemas/PaymentMethod' }
+              count: { type: integer }
+              amount: { $ref: '#/components/schemas/Money' }
+    RevenuePoint:
+      type: object
+      properties:
+        period:
+          type: string
+          description: Start date of the day, week or month
+          example: '2026-10-01'
+        invoiced: { $ref: '#/components/schemas/Money' }
+        collected: { $ref: '#/components/schemas/Money' }
