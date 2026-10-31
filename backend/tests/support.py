@@ -11,7 +11,7 @@ from decimal import Decimal
 from sqlalchemy import text
 
 from app.db import engine
-from app.services.periods import add_period
+from app.services.periods import next_period_start
 from tests.conftest import TEST_PREFIX, TRACKED_RUNS, auth_header, unique_email
 
 API = "/api/v1"
@@ -190,5 +190,5 @@ def periods_until(start: date, as_of: date, expiry: date, billing_period: str = 
     out, d = [], start
     while d <= as_of and d < expiry:
         out.append(d)
-        d = add_period(d, billing_period)
+        d = next_period_start(d, billing_period, start)
     return out

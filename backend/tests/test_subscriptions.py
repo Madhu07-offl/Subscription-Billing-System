@@ -117,6 +117,19 @@ def test_add_period_clamps_month_end():
     assert periods.add_period(date(2026, 3, 1), "weekly") == date(2026, 3, 8)
 
 
+def test_next_period_start_returns_to_the_anchor_day_after_a_short_month():
+    nxt, anchor = periods.next_period_start, date(2026, 1, 31)
+    chain = [anchor]
+    for _ in range(4):
+        chain.append(nxt(chain[-1], "monthly", anchor))
+    assert chain == [date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31), date(2026, 4, 30), date(2026, 5, 31)]
+    leap = date(2028, 2, 29)
+    assert nxt(leap, "yearly", leap) == date(2029, 2, 28) and nxt(date(2031, 2, 28), "yearly", leap) == date(2032, 2, 29)
+    # resume moved the billing date off the anchor day: keep that day, so the period is still a full month
+    assert nxt(date(2026, 3, 10), "monthly", anchor) == date(2026, 4, 10)
+    assert nxt(date(2026, 1, 31), "weekly", anchor) == date(2026, 2, 7)
+
+
 # ------------------------------------------------------------------ pricing through the API
 def test_odoo_variant_adds_560_and_tax_is_applied(client, admin_headers, catalogue, customer):
     sub = _draft(
