@@ -2,11 +2,11 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from app.schemas.common import CamelModel, PageMeta
 
-TemplateName = Annotated[str, Field(min_length=1, max_length=200)]
+TemplateName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 ValidityDays = Annotated[int, Field(ge=1, le=3650)]
 Quantity = Annotated[int, Field(ge=1, le=1_000_000)]
 

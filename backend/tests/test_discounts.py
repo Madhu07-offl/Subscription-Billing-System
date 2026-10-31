@@ -95,7 +95,7 @@ def test_seeded_discount_is_listed(client, admin):
 def test_validation(client, admin):
     base = {"name": f"{CATALOGUE_PREFIX}bad", "type": "fixed", "value": 5, "scope": "subscriptions", "startDate": str(TODAY)}
     for bad in (
-        {"type": "weird"}, {"scope": "everything"}, {"value": -1}, {"name": ""}, {"minQuantity": 0},
+        {"type": "weird"}, {"scope": "everything"}, {"value": -1}, {"name": ""}, {"name": "   "}, {"minQuantity": 0},
         {"usageLimit": 0}, {"startDate": "not-a-date"}, {"minPurchaseAmount": "-5.00"},
     ):  # fmt: skip
         r = client.post(f"{API}/discounts", json={**base, **bad}, headers=admin)

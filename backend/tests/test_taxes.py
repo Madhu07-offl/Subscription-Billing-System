@@ -59,7 +59,7 @@ def test_seeded_gst_is_listed(client, admin):
 
 def test_validation(client, admin):
     base = {"name": f"{CATALOGUE_PREFIX}bad", "computation": "percentage", "value": 5}
-    for bad in ({"computation": "weird"}, {"value": -1}, {"name": ""}, {"appliesToProductTypes": ["gadget"]}):
+    for bad in ({"computation": "weird"}, {"value": -1}, {"name": ""}, {"name": "   "}, {"appliesToProductTypes": ["gadget"]}):
         r = client.post(f"{API}/taxes", json={**base, **bad}, headers=admin)
         assert r.status_code == 400, (bad, r.text)
     assert client.post(f"{API}/taxes", json={"name": "x"}, headers=admin).status_code == 400

@@ -2,7 +2,7 @@ import uuid
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from app.schemas.common import CamelModel, Money, PageMeta
 from app.schemas.products import Price
@@ -11,7 +11,7 @@ from app.schemas.taxes import Amount, Number
 DiscountType = Literal["percentage", "fixed"]
 DiscountScope = Literal["products", "subscriptions"]
 DiscountStatus = Literal["scheduled", "running", "expired", "exhausted", "inactive"]
-DiscountName = Annotated[str, Field(min_length=1, max_length=200)]
+DiscountName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 MinQuantity = Annotated[int, Field(ge=1, le=1_000_000)]
 UsageLimit = Annotated[int, Field(ge=1, le=1_000_000_000)]
 

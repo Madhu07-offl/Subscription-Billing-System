@@ -54,7 +54,8 @@ def test_money_is_two_decimal_string_and_validated(client, admin):
     p = _product(client, admin, salesPrice=12.5)  # a JSON number is accepted but always echoed as "12.50"
     assert p["salesPrice"] == "12.50"
     base = {"name": f"{TEST_PREFIX}bad", "type": "goods", "salesPrice": "1.00", "costPrice": "1.00"}
-    for bad in ({"salesPrice": "-1.00"}, {"costPrice": "1.005"}, {"type": "gadget"}, {"name": ""}):
+    blank_variant = {"variants": [{"attribute": "Brand", "value": "  ", "extraPrice": "1.00"}]}
+    for bad in ({"salesPrice": "-1.00"}, {"costPrice": "1.005"}, {"type": "gadget"}, {"name": ""}, {"name": "   "}, blank_variant):
         r = client.post(f"{API}/products", json={**base, **bad}, headers=admin)
         assert r.status_code == 400, (bad, r.text)
         assert r.json()["error"]["code"] == "VALIDATION_ERROR"
@@ -127,6 +128,7 @@ def test_patch_is_partial_and_rejects_nulls(client, admin):
     assert len(updated["variants"]) == 1
     assert client.patch(f"{API}/products/{p['id']}", json={"notes": None}, headers=admin).json()["notes"] is None
     assert client.patch(f"{API}/products/{p['id']}", json={"name": None}, headers=admin).status_code == 400
+    assert client.patch(f"{API}/products/{p['id']}", json={"name": "  "}, headers=admin).status_code == 400
     assert client.patch(f"{API}/products/{MISSING_ID}", json={"name": "z"}, headers=admin).status_code == 404
 
 
@@ -148,6 +150,9 @@ def test_variant_crud(client, admin):
 
     dup = client.post(url, json={"attribute": "Brand", "value": "Odoo", "extraPrice": "1.00"}, headers=admin)
     assert dup.status_code == 409
+    blank = client.post(url, json={"attribute": " ", "value": "Odoo", "extraPrice": "1.00"}, headers=admin)
+    assert blank.status_code == 400  # not a duplicate: a blank attribute is invalid input
+    assert client.patch(f"{url}/{v['id']}", json={"value": "  "}, headers=admin).status_code == 400
 
     patched = client.patch(f"{url}/{v['id']}", json={"extraPrice": "600.00"}, headers=admin)
     assert patched.status_code == 200 and patched.json()["extraPrice"] == "600.00"
