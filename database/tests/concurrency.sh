@@ -18,10 +18,13 @@ restore() {
 trap restore EXIT
 
 # 1. 30 simultaneous callers must all get different numbers.
-tmp=$(mktemp); trap 'rm -f "$tmp"; restore' EXIT
-for _ in $(seq 1 30); do Q -c "select next_document_number('invoice')" >> "$tmp" & done
+# Each call writes its own file and the files are merged afterwards: parallel appends to one file
+# lose lines on Windows Git Bash.
+tmpdir=$(mktemp -d); trap 'rm -rf "$tmpdir"; restore' EXIT
+for i in $(seq 1 30); do Q -c "select next_document_number('invoice')" > "$tmpdir/$i.out" & done
 wait
-total=$(wc -l < "$tmp"); uniq=$(sort -u "$tmp" | wc -l)
+cat "$tmpdir"/*.out > "$tmpdir/all"
+total=$(wc -l < "$tmpdir/all"); uniq=$(sort -u "$tmpdir/all" | wc -l)
 [ "$total" -eq 30 ] && [ "$uniq" -eq 30 ] || { echo "FAIL: $uniq distinct of $total numbers"; exit 1; }
 echo "ok: 30 parallel calls -> 30 distinct numbers"
 
