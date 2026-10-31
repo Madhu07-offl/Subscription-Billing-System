@@ -113,13 +113,12 @@ create table if not exists payments (
   payment_date  date          not null,
   reference     text,                                      -- bank ref, cheque number, transaction id
   note          text,
-  is_voided     boolean       not null default false,      -- DELETE /payments/{id} voids, never deletes
-  voided_at     timestamptz,
+  voided_at     timestamptz,                               -- DELETE /payments/{id} voids (sets this), never deletes
+  is_voided     boolean       generated always as (voided_at is not null) stored,   -- contract isVoided
   voided_by     uuid          references users (id) on delete restrict,
   recorded_by   uuid          references users (id) on delete restrict,
   created_at    timestamptz   not null default now(),
-  updated_at    timestamptz   not null default now(),
-  constraint payments_void_ck check (is_voided = (voided_at is not null))
+  updated_at    timestamptz   not null default now()
 );
 comment on table payments is
   'Money received against an invoice. Voided rows stay for audit and are ignored by amount_paid and revenue reports.';
@@ -162,5 +161,27 @@ $$;
 
 drop trigger if exists trg_payments_sync_invoice on payments;
 create trigger trg_payments_sync_invoice
-  after insert or update of amount, is_voided or delete on payments
+  after insert or update of amount, voided_at or delete on payments
   for each row execute function sync_invoice_payment_state();
+
+-- Cancelling an invoice gives its discount usages back (API.md rule 6). Setting released_at makes
+-- trg_discount_usages_sync decrement discounts.used_count. Cancelling with live payments is already
+-- impossible: invoices_cancel_ck requires amount_paid = 0, and amount_paid only counts non-voided payments.
+create or replace function release_discount_usages_on_cancel()
+returns trigger
+language plpgsql
+as $$
+begin
+  update discount_usages
+     set released_at = now()
+   where invoice_id = new.id and released_at is null;
+  return null;
+end;
+$$;
+
+drop trigger if exists trg_invoices_release_discounts on invoices;
+create trigger trg_invoices_release_discounts
+  after update of status on invoices
+  for each row
+  when (new.status = 'cancelled' and old.status <> 'cancelled')
+  execute function release_discount_usages_on_cancel();

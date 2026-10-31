@@ -92,13 +92,23 @@ begin
   insert into payments (invoice_id, method, amount, payment_date) values (v_inv, 'cash', 2313.44, current_date);
   select * into v_row from v_invoices where id = v_inv;
   assert v_row.status = 'paid' and v_row.amount_due = 0 and not v_row.is_overdue, 'fully paid';
-  update payments set is_voided = true, voided_at = now() where id = v_pay;
+  update payments set voided_at = now() where id = v_pay;   -- only voided_at is set; is_voided is derived
+  assert (select is_voided from payments where id = v_pay), 'is_voided derived from voided_at';
   select * into v_row from v_invoices where id = v_inv;
   assert v_row.status = 'confirmed' and v_row.amount_paid = 2313.44, 'void moves back to confirmed';
 
-  -- cancel releases the period key
-  update payments set is_voided = true, voided_at = now() where invoice_id = v_inv and not is_voided;
+  -- cancel is rejected while non-voided payments exist
+  begin update invoices set status = 'cancelled' where id = v_inv; raise exception 'FAIL: cancelled with live payment';
+  exception when check_violation then null; end;
+  assert (select status from invoices where id = v_inv) = 'confirmed', 'rejected cancel left status alone';
+
+  -- cancel releases the period key AND gives discount usage back
+  update payments set voided_at = now() where invoice_id = v_inv and not is_voided;
+  assert (select amount_paid from invoices where id = v_inv) = 0, 'all payments voided -> amount_paid 0';
+  assert (select used_count from discounts where id = disc) = 1, 'usage still held before cancel';
   update invoices set status = 'cancelled' where id = v_inv;
+  assert (select used_count from discounts where id = disc) = 0, 'cancel gives discount usage back';
+  assert (select released_at is not null from discount_usages where discount_id = disc and invoice_id = v_inv), 'released_at set on cancel';
   insert into invoices (subscription_id, customer_id, period_start, period_end)
   values (v_sub, cust, '2026-10-01', '2026-10-31') returning id into v_inv2;
 
