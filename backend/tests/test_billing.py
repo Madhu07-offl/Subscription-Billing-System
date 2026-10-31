@@ -3,7 +3,9 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import text
 
+from app.db import engine
 from app.services import billing_service
 from app.services.periods import add_months
 from tests.support import (
@@ -202,6 +204,17 @@ def test_month_end_start_keeps_its_billing_day_after_february(client, admin_head
     ends = {i["periodStart"]: i["periodEnd"] for i in result["created"]}
     assert ends["2026-02-28"] == "2026-03-30"  # each period ends the day before the next one starts
     assert next_billing_date(client, admin_headers, sub["id"]) == "2026-05-31"
+
+
+def test_subscription_locked_by_another_process_is_reported_not_lost(client, admin_headers, cat, customer):
+    sub = make_subscription(client, admin_headers, customer, cat)
+    with engine.connect() as other:  # another run or an edit holds the row
+        other.execute(text("select 1 from subscriptions where id = :id for update"), {"id": sub["id"]})
+        result = run_billing(client, admin_headers, [sub["id"]])
+        other.rollback()
+    assert result["counts"] == {"due": 1, "created": 0, "alreadyBilled": 0, "failed": 1}
+    assert result["failed"][0]["subscriptionId"] == sub["id"] and "again" in result["failed"][0]["reason"]
+    assert run_billing(client, admin_headers, [sub["id"]])["counts"]["created"] == 1  # a rerun bills it
 
 
 def test_due_preview(client, admin_headers, cat, customer):
