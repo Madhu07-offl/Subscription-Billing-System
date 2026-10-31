@@ -44,14 +44,15 @@ class Subscription(Base):
     status: Mapped[str] = mapped_column(Text, server_default="draft")  # draft|quotation|confirmed|active|closed
     is_paused: Mapped[bool] = mapped_column(Boolean, server_default="false")
     customer_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("customers.id", ondelete="RESTRICT"))
-    # plan_id / start_date / expiry_date are nullable for drafts only (009: subscriptions_complete_ck)
+    # plan_id / start_date / expiry_date are nullable for drafts only (010: subscriptions_complete_ck)
     plan_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("plans.id", ondelete="RESTRICT"))
     template_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("quotation_templates.id", ondelete="SET NULL")
     )
     start_date: Mapped[date | None] = mapped_column(Date)
     expiry_date: Mapped[date | None] = mapped_column(Date)
-    payment_terms: Mapped[str] = mapped_column(Text, server_default="immediate")
+    # nullable, no default: required once the subscription leaves draft (010: subscriptions_complete_ck)
+    payment_terms: Mapped[str | None] = mapped_column(Text)
     quotation_valid_until: Mapped[date | None] = mapped_column(Date)
     next_billing_date: Mapped[date | None] = mapped_column(Date)
     notes: Mapped[str | None] = mapped_column(Text)
@@ -106,7 +107,7 @@ class SubscriptionStatusHistory(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     subscription_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("subscriptions.id", ondelete="CASCADE"))
-    event: Mapped[str] = mapped_column(Text, server_default="status_change")  # status_change|pause|resume|renew
+    event: Mapped[str] = mapped_column(Text, server_default="status_change")  # created|status_change|paused|resumed|renewed
     from_status: Mapped[str | None] = mapped_column(Text)
     to_status: Mapped[str] = mapped_column(Text)
     note: Mapped[str | None] = mapped_column(Text)
