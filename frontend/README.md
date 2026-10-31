@@ -12,19 +12,25 @@ npm run dev        # http://localhost:5173
 
 ## Connecting the real backend
 
-All data goes through one file: `src/api/index.js`. Nothing else knows where data comes from.
+The app talks to the FastAPI backend by default. All data goes through `src/api/index.js`, which picks a client:
 
-```js
-export const USE_MOCK = false;                          // was true
-export const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+| Variable | Meaning |
+|---|---|
+| `VITE_API_URL` | Backend base URL. Default `http://localhost:8000/api/v1` |
+| `VITE_USE_MOCK` | `true` = in-memory demo data, no server needed (offline demos). Default: real backend |
+
+Local run against the backend (start it first: `cd backend && uvicorn app.main:app --port 8000`):
+
+```bash
+npm run dev                            # real backend
+VITE_USE_MOCK=true npm run dev         # offline mock
 ```
 
-`BASE_URL` comes from the `VITE_API_URL` environment variable and falls back to the local FastAPI backend on port 8000.
-Copy `.env.example` to `.env` to change it for local development.
-
-Until then the app runs on in-memory mock data shaped exactly like the contract:
-money as a two-decimal string, lists as `{ data, meta: { page, limit, total, totalPages } }`,
-errors as `{ error: { code, message, details[] } }`.
+- `src/api/real.js` is the fetch client: JSON, `Authorization: Bearer <token>` (token kept in `localStorage`),
+  `{error:{code,message,details}}` turned into `ApiError`, a 401 clears the session and returns to the sign-in page.
+- It returns the same shapes as the mock, so pages do not care which one runs. Fields the API does not return are
+  derived there and marked `DERIVED:` in the code.
+- Sign in with a real account (dev seed: see `backend/README.md`, "The admin account").
 
 ## Deploy
 
@@ -44,36 +50,15 @@ Notes:
   It is public: never put secrets in a `VITE_` variable.
 - The API must allow this site's origin: set `FRONTEND_ORIGINS` on the backend to the static site's URL
   (see `backend/README.md`, "Deploy to Render").
-- **Today the app runs on mock data only.** `USE_MOCK` in `src/api/index.js` is `true` and the file has no HTTP client
-  yet, so nothing reads `BASE_URL` / `VITE_API_URL` (the bundler drops the unused constant). The setting is in place for
-  when the real client is added; flipping `USE_MOCK` alone is not enough until then.
-
-## What is implemented
-
-| Area | Screens |
-|---|---|
-| Auth | Login with role picker (admin / staff / customer), live password-rule validation |
-| Dashboard | MRR, active subscriptions, collected, outstanding + overdue; invoiced-vs-collected area chart; subscriptions-by-plan bar chart; recent invoices |
-| Subscriptions | Filterable list, create draft, detail page with lifecycle stepper and history |
-| Lifecycle | draft → quotation → confirmed → active → closed, plus pause / resume / renew, each gated by the plan flags (`allowPause`, `allowRenew`, `allowEarlyClose`) |
-| Invoices | Filterable list incl. overdue/outstanding, detail with lines and totals, confirm / send / cancel / print |
-| Payments | Record payment with validation (confirmed invoices only, cannot exceed amount due, partial allowed); invoice auto-moves to `paid` |
-| Billing | Preview what is due, dry run, and a real run that creates draft invoices and advances `nextBillingDate` |
-| Config | Products with variants, Plans, Discounts, Taxes, Customers, Users & staff |
-
-## Role-based access
-
-Navigation and actions follow the contract's `x-roles`:
-
-- **admin** — everything, including products, plans, taxes, discounts, users
-- **staff** — customers, subscriptions, billing, invoices, payments
-- **customer** — own subscriptions and invoices only (portal view)
+- `VITE_USE_MOCK` is also build-time. Never set it to `true` on a production deploy.
 
 ## Structure
 
 ```
 src/
-  api/index.js    API client + mock data (single swap point)
+  api/index.js    picks mock or real client; mock data
+  api/real.js     fetch client for the FastAPI backend
+  api/errors.js   ApiError
   ui.jsx          Badge, Flow, Stat, Modal, Toast, Empty, Loading, useAsync
   pages/index.jsx All screens
   App.jsx         Routing, role-aware navigation, app shell
