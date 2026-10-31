@@ -1067,6 +1067,29 @@ paths:
         '4XX': { $ref: '#/components/responses/Error' }
         default: { $ref: '#/components/responses/Error' }
 
+  /billing/auto-close:
+    post:
+      tags: [Billing]
+      summary: Close expired subscriptions (daily job)
+      description: |
+        Admin only. The daily job behind the `autoClose` plan flag: moves every `active` subscription whose plan has `autoClose=true`
+        and whose `expiryDate` is before `asOf` (default today) to `closed`, clears `nextBillingDate`, and writes a status-history entry
+        with `changedBy: null` (an automatic change). Safe to call repeatedly. Schedule it once a day, after the billing run.
+      operationId: autoCloseSubscriptions
+      x-roles: [admin]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AutoCloseRequest' }
+      responses:
+        '200':
+          description: Subscriptions closed by this call
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutoCloseResult' }
+        '4XX': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+
   # -------------------------------------------------------------- INVOICES
   /invoices:
     get:
@@ -2144,6 +2167,28 @@ components:
               subscriptionId: { type: string, format: uuid }
               number: { type: string }
               reason: { type: string }
+
+    AutoCloseRequest:
+      type: object
+      properties:
+        asOf:
+          type: string
+          format: date
+          description: Defaults to today. Subscriptions with `expiryDate` before this date are closed.
+    AutoCloseResult:
+      type: object
+      required: [asOf, closedCount, closed]
+      properties:
+        asOf: { type: string, format: date }
+        closedCount: { type: integer }
+        closed:
+          type: array
+          items:
+            type: object
+            required: [subscriptionId, number]
+            properties:
+              subscriptionId: { type: string, format: uuid }
+              number: { type: string }
 
     # --------------------------------------------------------- invoices
     InvoiceStatus:
