@@ -80,11 +80,29 @@ curl -s localhost:4000/api/v1/auth/me -H 'authorization: Bearer <token>'
 
 Until email sending exists, `POST /auth/forgot-password` prints the reset link to the server console.
 
+## Daily jobs
+
+Two jobs keep subscriptions moving. Run them **once a day, in this order**, from cron or any scheduler:
+
+| Order | Job | Call |
+|---|---|---|
+| 1 | Billing run: draft invoices for everything due (reruns are safe) | `POST /api/v1/billing/run` (admin or staff token) |
+| 2 | Auto-close: `active` subscriptions past `expiryDate` on `autoClose` plans become `closed`, `nextBillingDate` is cleared, history gets an entry with no user | `POST /api/v1/billing/auto-close` (admin token) |
+
+Billing goes first because closing clears the billing date. Auto-close can also run without HTTP, from this directory:
+`python -m app.services.auto_close_service`. Invoices created by the run stay `draft` until staff confirm them.
+Outgoing invoice emails (`POST /invoices/{id}/send`) are logged to the console for now.
+
 ## Tests
 
 ```bash
 pytest
 ```
+
+The billing, invoice and payment tests build their catalogue with SQL (there are no catalogue endpoints yet) and always
+pass `subscriptionIds` to `/billing/run`, so they never bill rows they did not create. `tests/test_auto_close.py` calls
+the real job: on a shared database it also closes any other expired `autoClose` subscription, which the daily job would
+do anyway. A full run takes several minutes against a remote database; run single files while developing.
 
 Tests run against the database in `DATABASE_URL`, so point them at a development database. They create users and
 customers whose emails start with `pytest-` and delete them afterwards. They need the seeded admin. The suite also
