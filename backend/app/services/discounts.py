@@ -4,7 +4,7 @@ status comes from v_discounts."""
 import uuid
 from datetime import date
 
-from sqlalchemy import Select, String, column, delete, func, or_, select, table
+from sqlalchemy import Select, String, column, delete, or_, select, table
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import AppError
