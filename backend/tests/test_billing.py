@@ -1,5 +1,5 @@
 """Billing run, due preview, run history and discounts on generated invoices (API.md section 3, rules 6-8)."""
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -188,6 +188,20 @@ def test_one_failing_subscription_does_not_block_the_others(client, admin_header
     # failures are stored with the run
     detail = client.get(f"{API}/billing/runs/{result['runId']}", headers=admin_headers).json()
     assert detail["counts"]["failed"] == 1 and detail["failed"][0]["subscriptionId"] == bad["id"]
+
+
+def test_month_end_start_keeps_its_billing_day_after_february(client, admin_headers, cat, customer):
+    start = date(2025, 8, 31)
+    sub = make_subscription(client, admin_headers, customer, cat, start=start, expiry=date(2026, 8, 31))
+    result = run_billing(client, admin_headers, [sub["id"]], as_of=date(2026, 5, 15))
+    starts = sorted(i["periodStart"] for i in result["created"])
+    assert starts == [
+        "2025-08-31", "2025-09-30", "2025-10-31", "2025-11-30", "2025-12-31",
+        "2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30",
+    ]  # fmt: skip
+    ends = {i["periodStart"]: i["periodEnd"] for i in result["created"]}
+    assert ends["2026-02-28"] == "2026-03-30"  # each period ends the day before the next one starts
+    assert next_billing_date(client, admin_headers, sub["id"]) == "2026-05-31"
 
 
 def test_due_preview(client, admin_headers, cat, customer):

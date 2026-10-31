@@ -31,7 +31,7 @@ from app.schemas.billing import (
 )
 from app.schemas.invoices import InvoiceSummaryOut
 from app.services import invoice_service, pricing
-from app.services.periods import add_period
+from app.services.periods import next_period_start
 from app.services.subscription_service import v, v_subscriptions
 
 logger = logging.getLogger("app.billing")
@@ -162,7 +162,7 @@ def _bill_subscription(
         plan = db.get(Plan, sub.plan_id)
         while _is_billable(sub, as_of):
             period_start = sub.next_billing_date
-            next_start = add_period(period_start, plan.billing_period)
+            next_start = next_period_start(period_start, plan.billing_period, sub.start_date)
             try:
                 with db.begin_nested():  # a duplicate period must not poison the rest of the subscription
                     inv = _create_invoice(db, sub, period_start, next_start - timedelta(days=1), run_id, user_id)
