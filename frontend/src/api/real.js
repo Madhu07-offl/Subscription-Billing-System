@@ -81,6 +81,7 @@ const mapInvoice = i => ({
 const mapDiscount = d => ({ ...d, usageLimit: d.usageLimit ?? '∞' });   // DERIVED: null limit -> infinity sign
 
 const monthKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+const addYear = iso => { const [y, m, d] = iso.split('-').map(Number); return dayKey(new Date(y + 1, m - 1, d)); };
 const dayKey   = d => `${monthKey(d)}-${String(d.getDate()).padStart(2, '0')}`;
 
 export function createRealApi(db, baseUrl) {
@@ -226,7 +227,11 @@ export function createRealApi(db, baseUrl) {
         customerId: pick(f.customerId, db.customers),
         planId: pick(f.planId, db.plans),
         startDate: f.startDate || undefined,
-        lines: [{ productId: pick(f.productId, db.products), quantity: Number(f.quantity) || 1 }],
+        // DERIVED: the form has no expiry or payment-terms fields, but the server refuses to send a
+        // quotation without them. Same defaults as the mock: net 15, and a one-year term.
+        expiryDate: f.startDate ? addYear(f.startDate) : undefined,
+        paymentTerms: 'net_15',
+        lines: [{ productId: pick(f.productId, db.products), quantity: Number(f.quantity) }],
       };
       return mapSub(await request('/subscriptions', { method: 'POST', body }));
     },
