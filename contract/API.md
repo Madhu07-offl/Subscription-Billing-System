@@ -85,6 +85,7 @@ Conventions worth repeating: money is a **string** with two decimals (`"560.00"`
 | GET `/subscriptions/{id}/invoices` | A S C | Invoices of one subscription | page, limit | page of invoices |
 | GET `/billing/due` | A S | Preview what is due | asOf?, page, limit | page of due subscriptions |
 | POST `/billing/run` | A S | Generate draft invoices for everything due | asOf?, subscriptionIds?, dryRun? | counts + created + failed |
+| POST `/billing/auto-close` | A | The daily auto-close job: close `active` subscriptions past `expiryDate` on `autoClose` plans | asOf? | closed count + list |
 | GET `/billing/runs` | A S | Past (real) runs, newest first | page, limit | page of run summaries |
 | GET `/billing/runs/{id}` | A S | One run with created invoices and failures | — | run detail |
 
@@ -110,7 +111,7 @@ Conventions worth repeating: money is a **string** with two decimals (`"560.00"`
 **Subscription**: `draft → quotation → confirmed → active → closed`. Each step is its own endpoint; anything else returns 409. Paused is a flag (`isPaused`), not a status, so the five statuses stay exactly as the brief names them.
 - `draft`/`quotation` are editable. From `confirmed` on, lines and totals are locked.
 - `send-quotation` needs customer, plan, `startDate`, `expiryDate`, `paymentTerms` and at least one line (422 listing what is missing); until then a draft may have those fields `null`. `activate` re-checks plan, dates.
-- `autoClose` plans: a daily job moves `active` subscriptions past `expiryDate` to `closed`.
+- `autoClose` plans: a daily job moves `active` subscriptions past `expiryDate` to `closed` (`POST /billing/auto-close`, admin only, also `python -m app.services.auto_close_service`). Schedule it once a day **after** the billing run. The history entry has `changedBy: null` (automatic change) and the reason `Auto-closed: expired on <expiryDate>`.
 - `closed` is final. `renew` works only on `active` subscriptions (409 otherwise); a closed subscription is replaced by a new one. Closing clears `nextBillingDate`; there is no proration or credit note in v1.
 - Pause and resume: `resume` sets `nextBillingDate = max(nextBillingDate, today)`, so paused time is never billed and no catch-up invoices appear.
 - Every status change, pause, resume and renew is logged and readable at `GET /subscriptions/{id}/history`.
