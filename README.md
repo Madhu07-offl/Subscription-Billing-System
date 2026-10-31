@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="C:\Users\madhu\Downloads\logo-full.png" alt="Brightloop Logo" width="320">
+  <img src="logo-full.png" alt="Brightloop Logo" width="320">
 </p>
 
 <h1 align="center">Subscription Billing System</h1>
