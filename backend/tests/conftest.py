@@ -19,6 +19,13 @@ def unique_email(label: str = "user") -> str:
 def _cleanup() -> None:
     with engine.begin() as conn:
         pattern = {"p": f"{TEST_PREFIX}%"}
+        # Subscriptions (lines and history cascade) and catalogue rows made by tests; children before parents.
+        conn.execute(
+            text("delete from subscriptions where customer_id in (select id from customers where email like :p)"),
+            pattern,
+        )
+        for table in ("quotation_templates", "plans", "products", "taxes"):
+            conn.execute(text(f"delete from {table} where name like :p"), pattern)
         # password_reset_tokens go with their users (ON DELETE CASCADE); users reference customers.
         conn.execute(text("delete from users where email like :p"), pattern)
         conn.execute(text("delete from customers where email like :p"), pattern)
