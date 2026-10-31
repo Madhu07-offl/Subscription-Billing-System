@@ -81,6 +81,7 @@ erDiagram
         text attribute
         text value
         numeric extra_price
+        boolean is_active "archive instead of delete"
     }
     plans {
         uuid id PK
@@ -161,10 +162,10 @@ erDiagram
         text status "draft|quotation|confirmed|active|closed"
         boolean is_paused
         uuid customer_id FK
-        uuid plan_id FK
+        uuid plan_id FK "null only in draft"
         uuid template_id FK
-        date start_date
-        date expiry_date
+        date start_date "null only in draft"
+        date expiry_date "null only in draft"
         text payment_terms
         date quotation_valid_until
         date next_billing_date
@@ -215,6 +216,10 @@ erDiagram
         numeric tax_total
         numeric total
         numeric amount_paid "amount_due, is_overdue only in v_invoices"
+        text billing_name "snapshot of customer"
+        citext billing_email "snapshot"
+        text billing_company "snapshot"
+        jsonb billing_address "snapshot"
     }
     invoice_lines {
         uuid id PK

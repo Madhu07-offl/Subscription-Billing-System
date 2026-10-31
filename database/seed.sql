@@ -27,8 +27,8 @@ values ('00000000-0000-4000-8000-000000000201', 'Brightloop CRM', 'software', 10
         'Seed product from the contract example')
 on conflict do nothing;
 
-insert into product_variants (id, product_id, attribute, value, extra_price)
-values ('00000000-0000-4000-8000-000000000211', '00000000-0000-4000-8000-000000000201', 'Brand', 'Odoo', 560.00)
+insert into product_variants (id, product_id, attribute, value, extra_price, is_active)
+values ('00000000-0000-4000-8000-000000000211', '00000000-0000-4000-8000-000000000201', 'Brand', 'Odoo', 560.00, true)
 on conflict do nothing;
 
 -- Monthly plan. Pause and early close allowed so those flows can be tried right away.
@@ -52,3 +52,9 @@ on conflict do nothing;
 insert into discount_products (discount_id, product_id)
 values ('00000000-0000-4000-8000-000000000501', '00000000-0000-4000-8000-000000000201')
 on conflict do nothing;
+
+-- A draft needs only a customer: no plan, dates or lines yet (contract: SubscriptionInput).
+-- WHERE NOT EXISTS (not ON CONFLICT) so a re-run does not burn a SUB- number.
+insert into subscriptions (id, customer_id)
+select '00000000-0000-4000-8000-000000000601', '00000000-0000-4000-8000-000000000101'
+where not exists (select 1 from subscriptions where id = '00000000-0000-4000-8000-000000000601');
