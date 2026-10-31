@@ -4,7 +4,8 @@
 //  Flip USE_MOCK to false when the backend is live. Nothing else changes.
 // ===================================================================
 export const USE_MOCK  = true;
-export const BASE_URL  = 'http://localhost:4000/api/v1';
+// Set VITE_API_URL at build time (see .env.example); the FastAPI backend runs on port 8000 locally.
+export const BASE_URL  = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 const money = n => n.toFixed(2);
 const today = new Date();
