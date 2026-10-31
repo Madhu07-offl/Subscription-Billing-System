@@ -7,7 +7,7 @@ begin;
 
 do $$
 declare
-  v_sub uuid; v_draft uuid; v_inv uuid; v_inv2 uuid; v_pay uuid; v_n int; v_row record;
+  v_sub uuid; v_draft uuid; v_inv uuid; v_inv2 uuid; v_inv3 uuid; v_pay uuid; v_n int; v_row record;
   cust constant uuid := '00000000-0000-4000-8000-000000000101';
   plan constant uuid := '00000000-0000-4000-8000-000000000301';
   prod constant uuid := '00000000-0000-4000-8000-000000000201';
@@ -143,6 +143,40 @@ begin
   select count(*) into v_n from v_report_revenue_facts where invoice_id = v_inv; assert v_n = 0, 'revenue facts exclude cancelled/voided';
   assert (select is_active from product_variants where id = vari), 'variant active by default';
   perform * from v_report_status_counts; perform * from v_report_mrr; perform * from v_customers;
+
+  -- 010: contract alignment
+  -- status history events follow the contract
+  insert into subscription_status_history (subscription_id, event, from_status, to_status) values (v_sub, 'created', null, 'draft');
+  insert into subscription_status_history (subscription_id, event, from_status, to_status) values (v_sub, 'paused', 'active', 'active');
+  begin insert into subscription_status_history (subscription_id, event, to_status) values (v_sub, 'pause', 'active');
+        raise exception 'FAIL: legacy event name accepted';
+  exception when check_violation then null; end;
+  -- payment_terms: null on a new draft, required past draft
+  assert (select payment_terms is null from subscriptions where id = v_draft), 'new draft has null payment_terms';
+  begin insert into subscriptions (customer_id, plan_id, start_date, expiry_date, status)
+        values (cust, plan, '2026-10-01', '2027-09-30', 'quotation'); raise exception 'FAIL: quotation without payment_terms';
+  exception when check_violation then null; end;
+  -- cancelled invoice cannot go back
+  begin update invoices set status = 'draft' where id = v_inv; raise exception 'FAIL: cancelled invoice revived';
+  exception when check_violation then null; end;
+  assert (select status from invoices where id = v_inv) = 'cancelled', 'cancelled invoice stays cancelled';
+  -- paid needs full payment
+  insert into invoices (subscription_id, customer_id, period_start, period_end, subtotal, total)
+  values (v_sub, cust, '2026-12-01', '2026-12-31', 100, 100) returning id into v_inv3;
+  begin update invoices set status = 'paid', issue_date = current_date, due_date = current_date where id = v_inv3;
+        raise exception 'FAIL: paid without payment';
+  exception when check_violation then null; end;
+  -- payments are immutable apart from void/note/reference
+  update invoices set status = 'confirmed', issue_date = current_date, due_date = current_date where id = v_inv3;
+  insert into payments (invoice_id, method, amount, payment_date) values (v_inv3, 'cash', 0.01, current_date) returning id into v_pay;
+  begin update payments set invoice_id = v_inv where id = v_pay; raise exception 'FAIL: payment moved to another invoice';
+  exception when check_violation then null; end;
+  begin update payments set amount = 5 where id = v_pay; raise exception 'FAIL: payment amount edited';
+  exception when check_violation then null; end;
+  update payments set note = 'ok', reference = 'ref-1' where id = v_pay;
+  -- v_invoices exposes the billing snapshot
+  assert (select billing_name from v_invoices where id = v_inv) = 'Asha Rao', 'v_invoices exposes billing_name';
+  assert (select billing_address->>'city' from v_invoices where id = v_inv) = 'Bengaluru', 'v_invoices exposes billing_address';
 
   raise notice 'smoke test OK';
 end $$;
