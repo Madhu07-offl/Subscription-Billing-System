@@ -42,74 +42,53 @@ def summary(
     db: Session, start: date | None, end: date | None, plan_id: uuid.UUID | None, customer_id: uuid.UUID | None
 ) -> DashboardSummary:
     start, end = resolve_period(start, end)
-    p = {"plan_id": plan_id, "customer_id": customer_id}
-    period = {**p, "start": start, "end": end}
-
-    sub_counts = dict.fromkeys(SUBSCRIPTION_STATUSES, 0)
-    sub_counts.update(
-        db.execute(
-            text(
-                "select status, count(*)::int from subscriptions s "
-                f"where {_filters('s.plan_id', 's.customer_id')} group by status"
-            ),
-            p,
-        ).all()
-    )
-    invoice_counts = dict.fromkeys(INVOICE_STATUSES, 0)
-    invoice_counts.update(
-        db.execute(
-            text(
-                "select i.status, count(*)::int from invoices i join subscriptions s on s.id = i.subscription_id "
-                f"where {_filters('s.plan_id', 'i.customer_id')} group by i.status"
-            ),
-            p,
-        ).all()
-    )
-    mrr = db.execute(
-        text(f"select coalesce(sum(monthly_amount), 0) from v_report_mrr m where {_filters('m.plan_id', 'm.customer_id')}"),
-        p,
-    ).scalar_one()
-
-    facts = dict(
-        db.execute(
-            text(
-                "select kind, coalesce(sum(amount), 0) from v_report_revenue_facts f "
-                f"where f.day between :start and :end and {_filters('f.plan_id', 'f.customer_id')} group by kind"
-            ),
-            period,
-        ).all()
-    )
-    methods = db.execute(
+    # One statement, one round trip: with a remote database (Supabase) latency, not row counts, is what eats
+    # the 2 s budget. Money leaves SQL as text so it is never squeezed through a JSON float.
+    sub_f, inv_f = _filters("s.plan_id", "s.customer_id"), _filters("s.plan_id", "i.customer_id")
+    fact_f, mrr_f = _filters("f.plan_id", "f.customer_id"), _filters("m.plan_id", "m.customer_id")
+    row = db.execute(
         text(
-            "select method, count(*)::int, sum(amount) from v_report_revenue_facts f "
-            f"where f.kind = 'collected' and f.day between :start and :end and {_filters('f.plan_id', 'f.customer_id')} "
-            "group by method order by sum(amount) desc, method"
+            f"""
+            select
+              (select coalesce(jsonb_object_agg(status, n), '{{}}') from (
+                 select status, count(*)::int as n from subscriptions s where {sub_f} group by status) x) as sub_counts,
+              (select coalesce(jsonb_object_agg(status, n), '{{}}') from (
+                 select i.status, count(*)::int as n from invoices i join subscriptions s on s.id = i.subscription_id
+                  where {inv_f} group by i.status) x) as invoice_counts,
+              (select coalesce(sum(monthly_amount), 0)::text from v_report_mrr m where {mrr_f}) as mrr,
+              (select jsonb_build_object(
+                        'invoiced',  coalesce(sum(amount) filter (where kind = 'invoiced'), 0)::text,
+                        'collected', coalesce(sum(amount) filter (where kind = 'collected'), 0)::text)
+                 from v_report_revenue_facts f where f.day between :start and :end and {fact_f}) as revenue,
+              (select coalesce(jsonb_agg(jsonb_build_object('method', method, 'count', n, 'amount', amt::text)
+                                         order by amt desc, method), '[]') from (
+                 select method, count(*)::int as n, sum(amount) as amt from v_report_revenue_facts f
+                  where f.kind = 'collected' and f.day between :start and :end and {fact_f} group by method) y) as methods,
+              (select jsonb_build_object(
+                        'outstanding',    coalesce(sum(v.amount_due) filter (where v.status = 'confirmed'), 0)::text,
+                        'overdue_count',  (count(*) filter (where v.is_overdue))::int,
+                        'overdue_amount', coalesce(sum(v.amount_due) filter (where v.is_overdue), 0)::text)
+                 from v_invoices v join subscriptions s on s.id = v.subscription_id
+                where {_filters("s.plan_id", "v.customer_id")}) as owed
+            """
         ),
-        period,
-    ).all()
-
-    outstanding, overdue_count, overdue_amount = db.execute(
-        text(
-            "select coalesce(sum(v.amount_due) filter (where v.status = 'confirmed'), 0), "
-            "       (count(*) filter (where v.is_overdue))::int, "
-            "       coalesce(sum(v.amount_due) filter (where v.is_overdue), 0) "
-            "from v_invoices v join subscriptions s on s.id = v.subscription_id "
-            f"where {_filters('s.plan_id', 'v.customer_id')}"
-        ),
-        p,
+        {"plan_id": plan_id, "customer_id": customer_id, "start": start, "end": end},
     ).one()
 
-    zero = Decimal("0")
+    sub_counts = {**dict.fromkeys(SUBSCRIPTION_STATUSES, 0), **row.sub_counts}
+    invoice_counts = {**dict.fromkeys(INVOICE_STATUSES, 0), **row.invoice_counts}
     return DashboardSummary(
         period={"from": start, "to": end},
         subscriptions=SubscriptionCounts(active=sub_counts["active"], by_status=sub_counts),
-        mrr=mrr,
-        revenue_invoiced=facts.get("invoiced", zero),
-        revenue_collected=facts.get("collected", zero),
-        outstanding=outstanding,
-        overdue=OverdueTotals(count=overdue_count, amount=overdue_amount),
+        mrr=Decimal(row.mrr),
+        revenue_invoiced=Decimal(row.revenue["invoiced"]),
+        revenue_collected=Decimal(row.revenue["collected"]),
+        outstanding=Decimal(row.owed["outstanding"]),
+        overdue=OverdueTotals(count=row.owed["overdue_count"], amount=Decimal(row.owed["overdue_amount"])),
         invoices_by_status=invoice_counts,
-        payments_by_method=[MethodTotals(method=m, count=c, amount=a) for m, c, a in methods],
+        payments_by_method=[
+            MethodTotals(method=m["method"], count=m["count"], amount=Decimal(m["amount"])) for m in row.methods
+        ],
     )
 
 
