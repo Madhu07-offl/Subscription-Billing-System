@@ -1,7 +1,10 @@
+
 <p align="center">
-  <img src="C:\Users\madhu\Downloads\logo-bl.webp" alt="Brightloop logo" width="320">
+  <img src="logo-bl.webp" alt="Brightloop Logo" width="320">
 </p>
-# Subscription Billing System
+
+<h1 align="center">Subscription Billing System</h1>
+
 
 One platform to run plans, subscriptions and recurring billing in one place.
 
