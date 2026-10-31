@@ -116,6 +116,10 @@ def record_payment(db: Session, body: PaymentInput, user: User) -> PaymentOut:
             f"Payments can only be recorded on confirmed invoices (invoice is {inv.status})",
             [{"field": "invoiceId", "message": f"Invoice is {inv.status}"}],
         )
+    if body.payment_date > date.today():
+        raise AppError.business_rule(
+            "paymentDate cannot be in the future", [{"field": "paymentDate", "message": "Cannot be in the future"}]
+        )
     amount = body.amount
     if amount.as_tuple().exponent < -2:
         raise AppError.validation("amount can have at most 2 decimals", "amount")

@@ -183,3 +183,24 @@ def test_invoice_with_payments_cannot_be_cancelled_until_they_are_voided(client,
 
     assert client.delete(f"{API}/payments/{payment_id}", headers=admin_headers).status_code == 204
     assert client.post(f"{API}/invoices/{inv_id}/cancel", headers=admin_headers).json()["status"] == "cancelled"
+
+
+# ------------------------------------------------------------------ PR #4 review by Prakash
+def test_a_future_payment_date_is_422(client, admin_headers, cat, customer):
+    inv_id = confirmed_invoice(client, admin_headers, customer, cat)
+    r = pay(client, admin_headers, inv_id, "10.00", paymentDate=str(TODAY + timedelta(days=1)))
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "BUSINESS_RULE" and r.json()["error"]["details"][0]["field"] == "paymentDate"
+    assert invoice(client, admin_headers, inv_id)["payments"] == []
+    # today and the past are fine
+    assert pay(client, admin_headers, inv_id, "10.00", paymentDate=str(TODAY)).status_code == 201
+    assert pay(client, admin_headers, inv_id, "10.00", paymentDate=str(TODAY - timedelta(days=30))).status_code == 201
+
+
+def test_the_balance_check_uses_amount_due_from_the_view(client, admin_headers, cat, customer):
+    inv_id = confirmed_invoice(client, admin_headers, customer, cat)
+    assert pay(client, admin_headers, inv_id, "1700.00").status_code == 201
+    over = pay(client, admin_headers, inv_id, "16.01")
+    assert over.status_code == 422 and "16.00" in over.json()["error"]["message"]
+    assert pay(client, admin_headers, inv_id, "16.00").status_code == 201
+    assert invoice(client, admin_headers, inv_id)["status"] == "paid"
