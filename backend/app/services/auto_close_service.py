@@ -53,6 +53,7 @@ def auto_close_expired(db: Session, as_of: date | None = None) -> AutoCloseResul
             sub.closed_at = func.now()
             sub.close_reason = reason
             sub.next_billing_date = None
+            sub.is_paused = False  # a closed subscription is never paused
             db.add(
                 SubscriptionStatusHistory(
                     subscription_id=sub.id,

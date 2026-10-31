@@ -457,6 +457,9 @@ def activate(db: Session, subscription_id: uuid.UUID, user: User) -> Subscriptio
             "Cannot activate, missing: " + ", ".join(missing),
             [{"field": f, "message": "Required to activate"} for f in missing],
         )
+    # Same checks as confirm: the plan may have been archived or edited, or the dates changed, since then.
+    _check_dates(sub.start_date, sub.expiry_date)
+    _check_plan(_plan_of(db, sub), sub.start_date, [ln.quantity for ln in sub.lines])
     sub.next_billing_date = sub.start_date
     _move(db, sub, "active", user)
     db.commit()
@@ -472,6 +475,7 @@ def close(db: Session, subscription_id: uuid.UUID, body: CloseRequest | None, us
     sub.closed_at = datetime.now(timezone.utc)
     sub.close_reason = reason
     sub.next_billing_date = None
+    sub.is_paused = False  # a closed subscription is never paused
     _move(db, sub, "closed", user, reason)
     db.commit()
     return get_subscription(db, sub.id, user)
@@ -492,6 +496,7 @@ def pause(db: Session, subscription_id: uuid.UUID, user: User) -> SubscriptionOu
 
 def resume(db: Session, subscription_id: uuid.UUID, user: User) -> SubscriptionOut:
     sub = _find_locked(db, subscription_id, user)
+    _require_status(sub, "active", "resume")  # closed is final: it can never be resumed
     if not sub.is_paused:
         raise AppError.conflict("Subscription is not paused")
     # Paused time is never billed: nextBillingDate never moves back, and jumps to today if it has passed.
