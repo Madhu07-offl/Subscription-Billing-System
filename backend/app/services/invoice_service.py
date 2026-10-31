@@ -89,7 +89,7 @@ def _customer_details(r) -> dict:
 def get_invoice(db: Session, invoice_id: uuid.UUID, user: User) -> InvoiceOut:
     stmt = select(v_invoices).where(v.id == invoice_id)
     if user.role == "customer":
-        stmt = stmt.where(v.customer_id == user.customer_id)  # someone else's invoice is a 404
+        stmt = stmt.where(v.customer_id == user.customer_id, v.status != "draft")  # someone else's, or a draft: 404
     r = db.execute(stmt).first()
     if r is None:
         raise AppError.not_found("Invoice not found")
@@ -124,7 +124,7 @@ def list_invoices(
 ):
     stmt = select(v_invoices)
     if user.role == "customer":
-        stmt = stmt.where(v.customer_id == user.customer_id)
+        stmt = stmt.where(v.customer_id == user.customer_id, v.status != "draft")  # customers never see drafts
     elif customer_id is not None:
         stmt = stmt.where(v.customer_id == customer_id)
     if q:
