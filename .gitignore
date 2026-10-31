@@ -1,4 +1,10 @@
+# Env files (never commit secrets)
+.env
+.env.*
+!.env.example
+node_modules/
+
+# Local-only files
 Subscription_Management_System.pdf
-# Review notes (local only)
 contract/*REVIEW*.md
 internal-notes/
