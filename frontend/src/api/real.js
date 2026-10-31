@@ -11,7 +11,13 @@ const USER_KEY  = 'bl_user';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TERM_DAYS = { immediate: 0, net_15: 15, net_30: 30, net_45: 45, net_60: 60 };
 
-export const getToken = () => localStorage.getItem(TOKEN_KEY);
+// A token only counts while the user record exists: App.jsx's sign-out removes bl_user without
+// calling api.logout(), so an orphaned token is dropped here instead of being sent.
+export const getToken = () => {
+  if (!localStorage.getItem(USER_KEY) && !loggingIn) { localStorage.removeItem(TOKEN_KEY); return null; }
+  return localStorage.getItem(TOKEN_KEY);
+};
+let loggingIn = false;
 
 let redirecting = false;
 function sessionExpired() {
@@ -164,7 +170,9 @@ export function createRealApi(db, baseUrl) {
       const res = await request('/auth/login', { method: 'POST', body: { email, password }, auth: false });
       localStorage.setItem(TOKEN_KEY, res.token);
       redirecting = false;
+      loggingIn = true;   // bl_user is written by the caller after we return; keep the token valid until then
       try { await hydrate(true); } catch { /* catalogue dropdowns are best effort */ }
+      finally { loggingIn = false; }
       return { token: res.token, user: mapUser(res.user) };
     },
     logout() {

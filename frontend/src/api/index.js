@@ -359,3 +359,6 @@ if (!USE_MOCK) {
   if (localStorage.getItem('bl_user')) real.hydrate().catch(() => {});   // page reload while signed in
 }
 export const api = USE_MOCK ? mockApi : real.api;
+
+/** Clear the session (token + stored user). Call from the sign-out handler. */
+export const logout = () => api.logout();
