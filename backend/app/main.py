@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import app.models  # noqa: F401  (registers every model)
 from app.config import get_settings
 from app.core.errors import register_error_handlers
-from app.routers import auth, customers, health, users, users
+from app.routers import auth, customers, health, products, users
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
     api.include_router(auth.router)
     api.include_router(users.router)
     api.include_router(customers.router)
-    api.include_router(users.router)
+    api.include_router(products.router)
     application.include_router(api)
     return application
 
