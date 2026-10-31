@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo-bl.webp" alt="Brightloop logo" width="320">
+  <img src="C:\Users\madhu\Downloads\logo-bl.webp" alt="Brightloop logo" width="320">
 </p>
 # Subscription Billing System
 
