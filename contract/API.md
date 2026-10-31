@@ -4,7 +4,9 @@ Companion to [`openapi.yaml`](openapi.yaml). The YAML is the source of truth for
 
 Base URL: `/api/v1`. Auth: `Authorization: Bearer <jwt>`. Mock server: `npx @stoplight/prism-cli mock contract/openapi.yaml -p 4010`.
 
-Legend for roles: **A** admin, **S** staff, **C** customer (own data only, scoped by the server), **—** public.
+Legend for roles: **A** admin, **S** staff, **C** customer (own data only, scoped by the server), **—** public. Every operation in the YAML also carries a machine-readable `x-roles` list.
+
+Conventions worth repeating: money is a **string** with two decimals (`"560.00"`), never a float. `PATCH` takes a partial body (`*Update` schemas, nothing required); `POST` takes the full `*Input`. Response fields are marked `required` in the YAML; nullable ones are always present with `null`.
 
 ## 1. Endpoint index
 
@@ -71,22 +73,27 @@ Legend for roles: **A** admin, **S** staff, **C** customer (own data only, scope
 | GET `/subscriptions/{id}` | A S C | One subscription with lines and totals | — | subscription |
 | PATCH `/subscriptions/{id}` | A S | Edit (draft or quotation only) | any create field | subscription |
 | DELETE `/subscriptions/{id}` | A S | Delete (draft only) | — | 204 |
-| POST `/subscriptions/{id}/send-quotation` | A S | draft → quotation | — | subscription |
+| POST `/subscriptions/request` | C | Customer starts a subscription (creates a draft for themselves) | planId, startDate, lines[] (productId, variantId?, quantity) | 201 subscription |
+| GET `/subscriptions/{id}/history` | A S C | Status changes plus pause, resume, renew events | page, limit | page of history entries |
+| POST `/subscriptions/{id}/send-quotation` | A S | draft → quotation (needs customer, plan, dates, payment terms, ≥1 line) | — | subscription |
 | POST `/subscriptions/{id}/confirm` | A S | quotation → confirmed | — | subscription |
 | POST `/subscriptions/{id}/activate` | A S | confirmed → active | — | subscription |
 | POST `/subscriptions/{id}/close` | A S C | active → closed (needs plan.allowEarlyClose) | reason? | subscription |
 | POST `/subscriptions/{id}/pause` | A S C | Pause billing (needs plan.allowPause) | — | subscription |
 | POST `/subscriptions/{id}/resume` | A S C | Resume billing | — | subscription |
-| POST `/subscriptions/{id}/renew` | A S C | Extend expiry (needs plan.allowRenew) | newExpiryDate? | subscription |
+| POST `/subscriptions/{id}/renew` | A S C | Extend expiry of an `active` subscription (needs plan.allowRenew) | newExpiryDate? | subscription |
 | GET `/subscriptions/{id}/invoices` | A S C | Invoices of one subscription | page, limit | page of invoices |
 | GET `/billing/due` | A S | Preview what is due | asOf?, page, limit | page of due subscriptions |
 | POST `/billing/run` | A S | Generate draft invoices for everything due | asOf?, subscriptionIds?, dryRun? | counts + created + failed |
+| GET `/billing/runs` | A S | Past (real) runs, newest first | page, limit | page of run summaries |
+| GET `/billing/runs/{id}` | A S | One run with created invoices and failures | — | run detail |
 
 ### Invoices, payments, reports
 | Method and path | Roles | What it does | Input | Output |
 |---|---|---|---|---|
 | GET `/invoices` | A S C | List (C: own) | page, limit, q, status, customerId, subscriptionId, isOverdue, hasBalance, issuedFrom, issuedTo | page of invoice summaries |
 | GET `/invoices/{id}` | A S C | Invoice with lines and payments | — | invoice |
+| PATCH `/invoices/{id}` | A S | Correct a draft invoice (notes, line description, quantity, unit price) | notes?, lines[] | invoice |
 | POST `/invoices/{id}/confirm` | A S | draft → confirmed | — | invoice |
 | POST `/invoices/{id}/cancel` | A S | Cancel (no payments allowed) | — | invoice |
 | POST `/invoices/{id}/send` | A S | Email to customer | to?, message? | invoice |
@@ -102,17 +109,22 @@ Legend for roles: **A** admin, **S** staff, **C** customer (own data only, scope
 
 **Subscription**: `draft → quotation → confirmed → active → closed`. Each step is its own endpoint; anything else returns 409. Paused is a flag (`isPaused`), not a status, so the five statuses stay exactly as the brief names them.
 - `draft`/`quotation` are editable. From `confirmed` on, lines and totals are locked.
+- `send-quotation` needs customer, plan, `startDate`, `expiryDate`, `paymentTerms` and at least one line (422 listing what is missing); until then a draft may have those fields `null`. `activate` re-checks plan, dates.
 - `autoClose` plans: a daily job moves `active` subscriptions past `expiryDate` to `closed`.
+- `closed` is final. `renew` works only on `active` subscriptions (409 otherwise); a closed subscription is replaced by a new one. Closing clears `nextBillingDate`; there is no proration or credit note in v1.
+- Pause and resume: `resume` sets `nextBillingDate = max(nextBillingDate, today)`, so paused time is never billed and no catch-up invoices appear.
+- Every status change, pause, resume and renew is logged and readable at `GET /subscriptions/{id}/history`.
 - Close, pause and renew by anyone (including the customer) are allowed only if the plan flag permits it, otherwise 422 `BUSINESS_RULE`.
 
 **Invoice**: `draft → confirmed → paid`, plus `cancelled`.
-- Billing creates `draft`. Staff confirm (sets `issueDate`, `dueDate = issueDate + paymentTerms`).
+- Billing creates `draft`. Staff can correct a draft with `PATCH /invoices/{id}`, then confirm (sets `issueDate`, `dueDate = issueDate + paymentTerms`). Customer name and address are copied onto the invoice when it is created (`customerDetails`), so later customer edits do not rewrite it.
+- Cancelling the subscription's latest invoice rewinds `nextBillingDate` to that invoice's `periodStart`, so the period is billed again. Cancelling an older invoice does not move it.
 - `paid` is set by the server when payments cover the total. Voiding a payment moves it back to `confirmed`.
 - `isOverdue` = status `confirmed` and `dueDate < today` and `amountDue > 0`. Computed, never stored.
 
 ## 3. Business rules the code must enforce
 
-1. **Auth**: email unique (409). Password more than 8 chars with upper, lower and special character (400 with field details). Reset tokens are single-use, 30 minutes. Only `POST /users/staff` creates staff; signup always creates a customer.
+1. **Auth**: email unique (409). Password more than 8 chars with upper, lower and special character (400 with field details). Reset tokens are single-use, 30 minutes. Only `POST /users/staff` creates staff; signup always creates a customer. If staff already created a customer with the same email, signup links to that record instead of creating a duplicate.
 2. **Scoping**: a customer asking for another customer's record gets 404, not 403.
 3. **Variant pricing**: line `unitPrice` = `product.salesPrice + variant.extraPrice` unless overridden. Example: Odoo brand adds 560.00.
 4. **Plan checks on subscription create/confirm**: `quantity >= plan.minQuantity`, and `startDate` inside `[availableFrom, availableTo]`, else 422.
@@ -121,13 +133,15 @@ Legend for roles: **A** admin, **S** staff, **C** customer (own data only, scope
    - Active, `startDate <= period start <= endDate`, `usedCount < usageLimit`.
    - `minQuantity` against the line (product scope) or total quantity (subscription scope); `minPurchaseAmount` against the line or subscription subtotal.
    - `scope=products` only touches lines of those products; `scope=subscriptions` with empty `subscriptionIds` applies to all.
+   - A fixed `subscriptions`-scope discount is shared across the invoice lines in proportion to each line's amount; the rounding remainder goes on the last line. A fixed `products`-scope discount applies once per matching line. `value` for a percentage is 0 to 100 (422 above).
    - One discount per line, the largest wins. `usedCount` goes up by 1 per invoice it applies to, in the same transaction. Cancelling the invoice gives it back.
-7. **Totals**: `amount = quantity * unitPrice`; `discountTotal` from rule 6; `taxTotal` from rule 5 on the discounted amount; `total = subtotal - discountTotal + taxTotal`.
+7. **Totals**: `plan.price` is a list price for display only and is never added to a total. `amount = quantity * unitPrice`; `discountTotal` from rule 6; `taxTotal` from rule 5 on the discounted amount; `total = subtotal - discountTotal + taxTotal`.
 8. **Billing run** (`POST /billing/run`):
    - Candidates: `status=active`, `isPaused=false`, `nextBillingDate <= asOf`.
    - Unique key `(subscriptionId, periodStart)` on invoices makes reruns safe; cancelled invoices release their key.
    - One transaction per subscription, so one failure does not block the rest; failures are listed in `failed`.
-   - After creating the invoice, `nextBillingDate` moves forward by one `billingPeriod`. If several periods were missed, the run loops until caught up.
+   - After creating the invoice, `nextBillingDate` moves forward by one `billingPeriod`. If several periods were missed, the run loops until caught up, but no period may start after `expiryDate`.
+   - Each real run is stored (`GET /billing/runs`, `GET /billing/runs/{id}`); `dryRun` is not.
 9. **Payments**: only on `confirmed` invoices; `amount > 0` and `<= amountDue`. Partial payments are fine.
 10. **Reports**: `outstanding` and `overdue` are as of today; `revenueCollected` uses `paymentDate` in `[from, to]`; `revenueInvoiced` uses `issueDate`. All list endpoints paginate; add indexes on `status`, `customerId`, `dueDate`, `nextBillingDate`, `paymentDate`.
 
